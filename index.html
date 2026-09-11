@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Achados pra Casa — produtos</title>
+<meta name="description" content="Os achados mais úteis pra cozinha, banheiro e quarto — com link direto pra comprar.">
+<style>
+  :root {
+    --fundo: #faf6f1;
+    --cartao: #ffffff;
+    --texto: #2b2420;
+    --suave: #7a6e66;
+    --borda: #ece4db;
+    --destaque: #c8643b;
+    --shopee: #ee4d2d;
+    --ml: #ffe600;
+    --ml-texto: #2d3277;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--fundo);
+    color: var(--texto);
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding-inline: 16px;
+  }
+  .pagina { max-width: 640px; margin: 0 auto; padding-block: 28px 40px; }
+  .previa {
+    background: #fff3cd; border: 1px solid #f0d98a; color: #6b5300;
+    border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 20px; text-align: center;
+  }
+  header { text-align: center; margin-bottom: 22px; }
+  .avatar {
+    width: 76px; height: 76px; border-radius: 50%; margin: 0 auto 10px;
+    display: grid; place-items: center; font-size: 38px;
+    background: #f3e3d6; border: 3px solid var(--cartao); box-shadow: 0 0 0 2px var(--destaque);
+  }
+  h1 { font-size: 21px; margin: 0; }
+  .arroba { color: var(--destaque); font-weight: 600; font-size: 14px; }
+  .descricao { color: var(--suave); margin: 8px auto 0; max-width: 420px; }
+  .dica { display: block; text-align: center; font-size: 14px; margin-bottom: 8px; }
+  .busca {
+    width: 100%; padding: 14px 16px; font: inherit; font-size: 17px; border-radius: 12px;
+    border: 1px solid var(--borda); background: var(--cartao); color: var(--texto);
+  }
+  .busca:focus { outline: 2px solid var(--destaque); outline-offset: 1px; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 12px 0 4px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none; border: 1px solid var(--borda); background: var(--cartao); color: var(--texto);
+    padding: 7px 12px; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { background: var(--destaque); border-color: var(--destaque); color: #fff; }
+  .grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+  @media (min-width: 560px) { .grade { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .card {
+    background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .foto { position: relative; aspect-ratio: 1; background: #f3ece5; display: grid; place-items: center; font-size: 44px; }
+  .foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .numero {
+    position: absolute; top: 8px; left: 8px; background: rgba(43,36,32,.85); color: #fff;
+    font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+  }
+  .info { padding: 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .nome {
+    font-size: 13.5px; font-weight: 600; margin: 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .preco { font-size: 15px; font-weight: 700; }
+  .comprar {
+    margin-top: auto; display: block; text-align: center; text-decoration: none;
+    padding: 9px 6px; border-radius: 10px; font-size: 13px; font-weight: 700;
+  }
+  .comprar.shopee { background: var(--shopee); color: #fff; }
+  .comprar.mercadolivre { background: var(--ml); color: var(--ml-texto); }
+  .vazio { text-align: center; color: var(--suave); padding: 30px 0; grid-column: 1 / -1; }
+  footer { margin-top: 28px; text-align: center; color: var(--suave); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="pagina">
+  <div class="previa">Prévia com produtos de exemplo — adicione produtos reais com <b>npm run add</b>.</div>
+  <header>
+    <div class="avatar" aria-hidden="true">🏠</div>
+    <h1>Achados pra Casa</h1>
+    <div class="arroba">@oachadopracasa</div>
+    <p class="descricao">Os achados mais úteis pra cozinha, banheiro e quarto — com link direto pra comprar.</p>
+  </header>
+
+  <label class="dica" for="busca">Viu no post? Digite o <b>número do produto</b> 👇</label>
+  <input class="busca" id="busca" type="search" placeholder="Ex.: 12 — ou busque pelo nome" aria-label="Número ou nome do produto">
+  <div class="chips" id="chips" role="toolbar" aria-label="Filtrar por cômodo">
+    <button class="chip" data-cat="" aria-pressed="true">Todos</button>
+    <button class="chip" data-cat="cozinha" aria-pressed="false">🍳 Cozinha</button>
+    <button class="chip" data-cat="banheiro" aria-pressed="false">🛁 Banheiro</button>
+  </div>
+
+  <main class="grade" id="grade"></main>
+
+  <footer>
+    <p>Alguns links são de afiliado: posso receber uma comissão pelas compras, sem nenhum custo extra pra você.</p>
+    <p>Preços e disponibilidade podem mudar — confira na loja.</p>
+  </footer>
+</div>
+
+<script>
+  const DADOS = {"categorias":{"cozinha":{"nome":"Cozinha","emoji":"🍳"},"banheiro":{"nome":"Banheiro","emoji":"🛁"},"quarto":{"nome":"Quarto","emoji":"🛏️"},"sala":{"nome":"Sala","emoji":"🛋️"},"lavanderia":{"nome":"Lavanderia","emoji":"🧺"},"organizacao":{"nome":"Organização","emoji":"📦"}},"lojas":{"shopee":"Shopee","mercadolivre":"Mercado Livre"},"produtos":[{"id":3,"nome":"Organizador de gaveta expansível para talheres","loja":"shopee","categoria":"cozinha","link":"https://shopee.com.br/","imagem":null,"preco":34.9},{"id":2,"nome":"Kit 6 potes herméticos com tampa de bambu","loja":"mercadolivre","categoria":"cozinha","link":"https://www.mercadolivre.com.br/","imagem":null,"preco":79.9},{"id":1,"nome":"Porta shampoo de parede sem furar","loja":"shopee","categoria":"banheiro","link":"https://shopee.com.br/","imagem":null,"preco":22.5}]};
+  const grade = document.getElementById('grade');
+  const busca = document.getElementById('busca');
+  const chips = document.getElementById('chips');
+  let categoria = '';
+
+  const normalizar = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const reais = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+  function card(p) {
+    const cat = DADOS.categorias[p.categoria];
+    const el = document.createElement('article');
+    el.className = 'card';
+
+    const foto = document.createElement('div');
+    foto.className = 'foto';
+    if (p.imagem) {
+      const img = document.createElement('img');
+      img.src = p.imagem; img.alt = p.nome; img.loading = 'lazy';
+      foto.append(img);
+    } else {
+      foto.textContent = cat ? cat.emoji : '🏠';
+    }
+    const num = document.createElement('span');
+    num.className = 'numero'; num.textContent = 'nº ' + p.id;
+    foto.append(num);
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const nome = document.createElement('h2');
+    nome.className = 'nome'; nome.textContent = p.nome;
+    info.append(nome);
+    if (p.preco != null) {
+      const preco = document.createElement('div');
+      preco.className = 'preco'; preco.textContent = reais(p.preco);
+      info.append(preco);
+    }
+    const link = document.createElement('a');
+    link.className = 'comprar ' + p.loja;
+    link.href = p.link; link.target = '_blank'; link.rel = 'noopener sponsored';
+    link.textContent = 'Ver no ' + (p.loja === 'shopee' ? 'Shopee' : 'Mercado Livre');
+    info.append(link);
+
+    el.append(foto, info);
+    return el;
+  }
+
+  function render() {
+    const termo = normalizar(busca.value.trim().replace(/^n[º°o]?\s*/i, ''));
+    const porNumero = /^\d+$/.test(termo);
+    const lista = DADOS.produtos.filter((p) => {
+      if (porNumero) return String(p.id) === String(Number(termo));
+      return (!categoria || p.categoria === categoria) && (!termo || normalizar(p.nome).includes(termo));
+    });
+    grade.replaceChildren(...lista.map(card));
+    if (!lista.length) {
+      const vazio = document.createElement('p');
+      vazio.className = 'vazio';
+      vazio.textContent = porNumero ? 'Nenhum produto com o nº ' + Number(termo) + '. Confira o número no post.' : 'Nenhum produto encontrado.';
+      grade.append(vazio);
+    }
+  }
+
+  busca.addEventListener('input', render);
+  chips.addEventListener('click', (e) => {
+    const btn = e.target.closest('.chip');
+    if (!btn) return;
+    categoria = btn.dataset.cat;
+    for (const c of chips.children) c.setAttribute('aria-pressed', String(c === btn));
+    render();
+  });
+
+  // Link direto para um produto: .../?n=12 (ou .../#12)
+  const numeroInicial = new URLSearchParams(location.search).get('n') || location.hash.slice(1);
+  if (/^\d+$/.test(numeroInicial)) busca.value = numeroInicial;
+  render();
+</script>
+</body>
+</html>
