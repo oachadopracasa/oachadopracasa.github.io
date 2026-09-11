@@ -82,7 +82,7 @@
 </head>
 <body>
 <div class="pagina">
-  <div class="previa">Prévia com produtos de exemplo — adicione produtos reais com <b>npm run add</b>.</div>
+  
   <header>
     <div class="avatar" aria-hidden="true">🏠</div>
     <h1>Achados pra Casa</h1>
@@ -95,7 +95,6 @@
   <div class="chips" id="chips" role="toolbar" aria-label="Filtrar por cômodo">
     <button class="chip" data-cat="" aria-pressed="true">Todos</button>
     <button class="chip" data-cat="cozinha" aria-pressed="false">🍳 Cozinha</button>
-    <button class="chip" data-cat="banheiro" aria-pressed="false">🛁 Banheiro</button>
   </div>
 
   <main class="grade" id="grade"></main>
@@ -107,7 +106,7 @@
 </div>
 
 <script>
-  const DADOS = {"categorias":{"cozinha":{"nome":"Cozinha","emoji":"🍳"},"banheiro":{"nome":"Banheiro","emoji":"🛁"},"quarto":{"nome":"Quarto","emoji":"🛏️"},"sala":{"nome":"Sala","emoji":"🛋️"},"lavanderia":{"nome":"Lavanderia","emoji":"🧺"},"organizacao":{"nome":"Organização","emoji":"📦"}},"lojas":{"shopee":"Shopee","mercadolivre":"Mercado Livre"},"produtos":[{"id":3,"nome":"Organizador de gaveta expansível para talheres","loja":"shopee","categoria":"cozinha","link":"https://shopee.com.br/","imagem":null,"preco":34.9},{"id":2,"nome":"Kit 6 potes herméticos com tampa de bambu","loja":"mercadolivre","categoria":"cozinha","link":"https://www.mercadolivre.com.br/","imagem":null,"preco":79.9},{"id":1,"nome":"Porta shampoo de parede sem furar","loja":"shopee","categoria":"banheiro","link":"https://shopee.com.br/","imagem":null,"preco":22.5}]};
+  const DADOS = {"categorias":{"cozinha":{"nome":"Cozinha","emoji":"🍳"},"banheiro":{"nome":"Banheiro","emoji":"🛁"},"quarto":{"nome":"Quarto","emoji":"🛏️"},"sala":{"nome":"Sala","emoji":"🛋️"},"lavanderia":{"nome":"Lavanderia","emoji":"🧺"},"organizacao":{"nome":"Organização","emoji":"📦"}},"lojas":{"shopee":"Shopee","mercadolivre":"Mercado Livre"},"produtos":[{"id":1,"nome":"Omeleteira Agratto Mr Cheff Inox Redonda 127v / 220v","loja":"shopee","categoria":"cozinha","link":"https://s.shopee.com.br/1gIWFICgF0","imagem":"https://down-br.img.susercontent.com/file/br-11134207-820ll-mmc8h9uyaoee6b","preco":null}]};
   const grade = document.getElementById('grade');
   const busca = document.getElementById('busca');
   const chips = document.getElementById('chips');
