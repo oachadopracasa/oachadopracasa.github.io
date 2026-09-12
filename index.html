@@ -3,95 +3,123 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Achados pra Casa — produtos</title>
-<meta name="description" content="Os achados mais úteis pra cozinha, banheiro e quarto — com link direto pra comprar.">
+<title>Achados pra Casa</title>
+<meta name="description" content="Os achados mais úteis pra cozinha, banheiro e quarto, com link direto pra comprar.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --fundo: #faf6f1;
-    --cartao: #ffffff;
-    --texto: #2b2420;
-    --suave: #7a6e66;
-    --borda: #ece4db;
-    --destaque: #c8643b;
-    --shopee: #ee4d2d;
-    --ml: #ffe600;
-    --ml-texto: #2d3277;
+    --creme:#FAF6F1; --areia:#F1E2D4; --terracota:#C05A32; --terracota-claro:#E08A5F;
+    --texto:#241D19; --suave:#7A6E66; --borda:rgba(36,29,25,.08);
+    --titulo:'Bricolage Grotesque', system-ui, sans-serif;
   }
-  * { box-sizing: border-box; }
+  * { box-sizing:border-box; }
   body {
-    margin: 0;
-    background: var(--fundo);
-    color: var(--texto);
-    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    padding-inline: 16px;
+    margin:0; padding-inline:18px; color:var(--texto);
+    font:16px/1.45 'Poppins', system-ui, -apple-system, sans-serif;
+    background:
+      radial-gradient(rgba(36,29,25,.05) 1.5px, transparent 1.6px) 0 0 / 26px 26px,
+      radial-gradient(120% 60% at 50% 0%, #FFFDFB 0%, var(--creme) 45%, #F2E7DC 100%);
+    background-attachment:fixed;
   }
-  .pagina { max-width: 640px; margin: 0 auto; padding-block: 28px 40px; }
+  .pagina { max-width:620px; margin:0 auto; padding-block:34px 44px; }
+
   .previa {
-    background: #fff3cd; border: 1px solid #f0d98a; color: #6b5300;
-    border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 20px; text-align: center;
+    background:#FFF3CD; border:1px solid #F0D98A; color:#6B5300;
+    border-radius:14px; padding:12px 14px; font-size:13.5px; margin-bottom:22px; text-align:center;
   }
-  header { text-align: center; margin-bottom: 22px; }
-  .avatar {
-    width: 76px; height: 76px; border-radius: 50%; margin: 0 auto 10px;
-    display: grid; place-items: center; font-size: 38px;
-    background: #f3e3d6; border: 3px solid var(--cartao); box-shadow: 0 0 0 2px var(--destaque);
+
+  header { text-align:center; margin-bottom:26px; }
+  .arroba {
+    display:inline-block; background:var(--areia); color:var(--terracota);
+    border-radius:999px; padding:7px 18px; font-size:13px; font-weight:700; letter-spacing:1.4px;
+    text-transform:uppercase; margin-bottom:14px;
   }
-  h1 { font-size: 21px; margin: 0; }
-  .arroba { color: var(--destaque); font-weight: 600; font-size: 14px; }
-  .descricao { color: var(--suave); margin: 8px auto 0; max-width: 420px; }
-  .dica { display: block; text-align: center; font-size: 14px; margin-bottom: 8px; }
+  h1 {
+    font-family:var(--titulo); font-weight:800; font-size:38px; line-height:1.08;
+    letter-spacing:-.8px; margin:0;
+  }
+  h1 .destaque {
+    color:var(--terracota);
+    background:linear-gradient(180deg, transparent 56%, rgba(192,90,50,.20) 56%, rgba(192,90,50,.20) 93%, transparent 93%);
+    padding:0 .06em; border-radius:6px;
+  }
+  .descricao { color:var(--suave); margin:12px auto 0; max-width:420px; font-size:15px; }
+
+  .dica { display:block; text-align:center; font-size:15px; font-weight:500; margin-bottom:10px; }
+  .dica b { color:var(--terracota); }
   .busca {
-    width: 100%; padding: 14px 16px; font: inherit; font-size: 17px; border-radius: 12px;
-    border: 1px solid var(--borda); background: var(--cartao); color: var(--texto);
+    width:100%; padding:15px 18px; font:inherit; font-size:17px; border-radius:16px;
+    border:1px solid var(--borda); background:#fff; color:var(--texto);
+    box-shadow:0 2px 4px rgba(36,29,25,.03), 0 12px 26px rgba(36,29,25,.06);
   }
-  .busca:focus { outline: 2px solid var(--destaque); outline-offset: 1px; }
-  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 12px 0 4px; scrollbar-width: none; }
-  .chips::-webkit-scrollbar { display: none; }
+  .busca::placeholder { color:#B3A79E; }
+  .busca:focus { outline:2px solid var(--terracota); outline-offset:1px; }
+
+  .chips { display:flex; gap:9px; overflow-x:auto; padding:16px 2px 6px; scrollbar-width:none; }
+  .chips::-webkit-scrollbar { display:none; }
   .chip {
-    flex: none; border: 1px solid var(--borda); background: var(--cartao); color: var(--texto);
-    padding: 7px 12px; border-radius: 999px; font: inherit; font-size: 13px; cursor: pointer;
+    flex:none; border:1px solid var(--borda); background:#fff; color:var(--texto);
+    padding:9px 16px; border-radius:999px; font:inherit; font-size:13.5px; font-weight:600; cursor:pointer;
   }
-  .chip[aria-pressed="true"] { background: var(--destaque); border-color: var(--destaque); color: #fff; }
-  .grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
-  @media (min-width: 560px) { .grade { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .chip[aria-pressed="true"] {
+    background:linear-gradient(135deg, var(--terracota-claro), var(--terracota));
+    border-color:transparent; color:#fff; box-shadow:0 8px 18px rgba(192,90,50,.28);
+  }
+
+  .grade { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:26px 14px; margin-top:22px; }
+  @media (min-width:560px) { .grade { grid-template-columns:repeat(3, minmax(0,1fr)); gap:30px 18px; } }
+
   .card {
-    background: var(--cartao); border: 1px solid var(--borda); border-radius: 14px;
-    overflow: hidden; display: flex; flex-direction: column;
+    position:relative; background:#fff; border:1px solid var(--borda); border-radius:24px;
+    display:flex; flex-direction:column; padding:10px 10px 12px;
+    box-shadow:0 2px 4px rgba(36,29,25,.04), 0 16px 34px rgba(36,29,25,.09);
   }
-  .foto { position: relative; aspect-ratio: 1; background: #f3ece5; display: grid; place-items: center; font-size: 44px; }
-  .foto img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  /* selo do número na quina, por fora da foto, igual às capas do feed */
   .numero {
-    position: absolute; top: 8px; left: 8px; background: rgba(43,36,32,.85); color: #fff;
-    font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+    position:absolute; top:-11px; left:-9px; z-index:2;
+    background:#fff; color:var(--terracota); border:2px solid var(--terracota);
+    font-size:12.5px; font-weight:700; padding:5px 13px; border-radius:999px;
+    box-shadow:0 6px 14px rgba(36,29,25,.12);
   }
-  .info { padding: 10px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .foto {
+    aspect-ratio:1; border-radius:18px; overflow:hidden; background:#fff;
+    display:grid; place-items:center; font-size:40px;
+  }
+  .foto img { width:100%; height:100%; object-fit:contain; }
+
+  .info { display:flex; flex-direction:column; gap:7px; flex:1; padding:10px 4px 0; }
   .nome {
-    font-size: 13.5px; font-weight: 600; margin: 0;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    font-size:13.5px; font-weight:600; line-height:1.3; margin:0;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
   }
-  .preco { font-size: 15px; font-weight: 700; }
+  .preco { font-family:var(--titulo); font-weight:800; font-size:19px; line-height:1.1; }
+  .preco small { display:block; font-family:'Poppins',sans-serif; font-size:10.5px; font-weight:400; color:var(--suave); margin-top:2px; }
+  .loja { font-size:11px; font-weight:600; color:var(--suave); letter-spacing:.4px; }
+
   .comprar {
-    margin-top: auto; display: block; text-align: center; text-decoration: none;
-    padding: 9px 6px; border-radius: 10px; font-size: 13px; font-weight: 700;
+    margin-top:auto; display:block; text-align:center; text-decoration:none;
+    background:linear-gradient(135deg, var(--terracota-claro), var(--terracota)); color:#fff;
+    padding:11px 8px; border-radius:14px; font-size:13.5px; font-weight:700;
+    box-shadow:0 8px 18px rgba(192,90,50,.26);
   }
-  .comprar.shopee { background: var(--shopee); color: #fff; }
-  .comprar.mercadolivre { background: var(--ml); color: var(--ml-texto); }
-  .vazio { text-align: center; color: var(--suave); padding: 30px 0; grid-column: 1 / -1; }
-  footer { margin-top: 28px; text-align: center; color: var(--suave); font-size: 12px; }
+  .vazio { text-align:center; color:var(--suave); padding:36px 0; grid-column:1 / -1; }
+
+  footer { margin-top:34px; text-align:center; color:var(--suave); font-size:12px; line-height:1.6; }
 </style>
 </head>
 <body>
 <div class="pagina">
   
   <header>
-    <div class="avatar" aria-hidden="true">🏠</div>
-    <h1>Achados pra Casa</h1>
     <div class="arroba">@oachadopracasa</div>
-    <p class="descricao">Os achados mais úteis pra cozinha, banheiro e quarto — com link direto pra comprar.</p>
+    <h1>Achados pra <span class="destaque">Casa</span></h1>
+    <p class="descricao">Os achados mais úteis pra cozinha, banheiro e quarto, com link direto pra comprar.</p>
   </header>
 
   <label class="dica" for="busca">Viu no post? Digite o <b>número do produto</b> 👇</label>
-  <input class="busca" id="busca" type="search" placeholder="Ex.: 12 — ou busque pelo nome" aria-label="Número ou nome do produto">
+  <input class="busca" id="busca" type="search" placeholder="Ex.: 12, ou busque pelo nome" aria-label="Número ou nome do produto">
   <div class="chips" id="chips" role="toolbar" aria-label="Filtrar por cômodo">
     <button class="chip" data-cat="" aria-pressed="true">Todos</button>
     <button class="chip" data-cat="cozinha" aria-pressed="false">🍳 Cozinha</button>
@@ -103,7 +131,7 @@
 
   <footer>
     <p>Alguns links são de afiliado: posso receber uma comissão pelas compras, sem nenhum custo extra pra você.</p>
-    <p>Preços e disponibilidade podem mudar — confira na loja.</p>
+    <p>Preços e disponibilidade podem mudar, confira na loja.</p>
   </footer>
 </div>
 
@@ -122,6 +150,10 @@
     const el = document.createElement('article');
     el.className = 'card';
 
+    const num = document.createElement('span');
+    num.className = 'numero';
+    num.textContent = 'Nº ' + p.id;
+
     const foto = document.createElement('div');
     foto.className = 'foto';
     if (p.imagem) {
@@ -131,27 +163,36 @@
     } else {
       foto.textContent = cat ? cat.emoji : '🏠';
     }
-    const num = document.createElement('span');
-    num.className = 'numero'; num.textContent = 'nº ' + p.id;
-    foto.append(num);
 
     const info = document.createElement('div');
     info.className = 'info';
+
     const nome = document.createElement('h2');
     nome.className = 'nome'; nome.textContent = p.nome;
     info.append(nome);
+
     if (p.preco != null) {
       const preco = document.createElement('div');
-      preco.className = 'preco'; preco.textContent = reais(p.preco);
+      preco.className = 'preco';
+      preco.textContent = reais(p.preco);
+      const nota = document.createElement('small');
+      nota.textContent = 'último preço visto';
+      preco.append(nota);
       info.append(preco);
+    } else {
+      const loja = document.createElement('div');
+      loja.className = 'loja';
+      loja.textContent = DADOS.lojas[p.loja];
+      info.append(loja);
     }
+
     const link = document.createElement('a');
-    link.className = 'comprar ' + p.loja;
+    link.className = 'comprar';
     link.href = p.link; link.target = '_blank'; link.rel = 'noopener sponsored';
     link.textContent = p.loja === 'shopee' ? 'Ver na Shopee' : 'Ver no Mercado Livre';
     info.append(link);
 
-    el.append(foto, info);
+    el.append(num, foto, info);
     return el;
   }
 
