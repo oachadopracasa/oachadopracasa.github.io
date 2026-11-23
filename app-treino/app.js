@@ -36,6 +36,11 @@ const ICONS = {
   play: '<path d="M8 5.5v13l10.5-6.5z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
   swap: '<path d="M5 8h13l-3.5-3.5M19 16H6l3.5 3.5"/>',
+  cart: '<path d="M3 4.5h2.2l2 10h10.6l2-7.5H6"/><circle cx="9" cy="19" r="1.4"/><circle cx="17" cy="19" r="1.4"/>',
+  book: '<path d="M5 5a1.5 1.5 0 0 1 1.5-1.5H18.5V17H6.5A1.5 1.5 0 0 0 5 18.5z"/><path d="M5 18.5A1.5 1.5 0 0 0 6.5 20h12"/>',
+  camera: '<path d="M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4z"/><circle cx="12" cy="13.5" r="3.3"/>',
+  ruler: '<path d="M3.5 15.5 15.5 3.5l5 5-12 12z"/><path d="m8 11 2 2M11 8l2 2M14 5l1.5 1.5"/>',
+  pill: '<rect x="3.5" y="8.5" width="17" height="7" rx="3.5"/><path d="M12 8.5v7"/>',
   history: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/><path d="M12 8v4l3 2"/>',
 };
 const ic = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
@@ -97,7 +102,8 @@ function generatePlan(p) {
 const defaultState = () => {
   const profile = { objetivo: 'emagrecimento', dias: 3, nivel: 'iniciante' };
   return { version: 2, profile, plan: generatePlan(profile), sessions: [], active: null,
-    diet: { raw: '', groups: [] }, dietLog: {}, morning: [], activities: [], ui: { tab: 'hoje' } };
+    diet: { raw: '', groups: [] }, dietLog: {}, morning: [], activities: [], ui: { tab: 'hoje' },
+    photos: [], measures: [], supps: [], recipes: [], shopping: { checked: {}, extra: [], days: 7 } };
 };
 
 function migrate(s) {
@@ -107,6 +113,8 @@ function migrate(s) {
     delete s.diet.meals;
   }
   if (!s.diet.groups) s.diet.groups = [];
+  ['photos', 'measures', 'supps', 'recipes'].forEach((k) => { if (!Array.isArray(s[k])) s[k] = []; });
+  if (!s.shopping) s.shopping = { checked: {}, extra: [], days: 7 };
   if (!['hoje', 'treino', 'dieta', 'progresso', 'perfil'].includes(s.ui?.tab)) s.ui = { ...(s.ui || {}), tab: 'hoje' };
   s.plan.workouts.forEach((w, k) => {
     if (!w.letter) {
@@ -125,6 +133,71 @@ catch { state = defaultState(); }
 function save() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
   catch (e) { alert('Não consegui salvar no celular: ' + e.message); }
+}
+
+/* ---------------- Fotos (guardadas no IndexedDB do celular) ---------------- */
+const idb = (() => {
+  let dbp;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('treino-fotos', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('fotos');
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+  const run = async (mode, fn) => {
+    const db = await open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('fotos', mode), req = fn(t.objectStore('fotos'));
+      t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error);
+    });
+  };
+  return {
+    put: (id, b) => run('readwrite', (st) => st.put(b, id)),
+    get: (id) => run('readonly', (st) => st.get(id)),
+    del: (id) => run('readwrite', (st) => st.delete(id)),
+    clear: () => run('readwrite', (st) => st.clear()),
+  };
+})();
+const photoUrls = {};
+async function hydratePhotos(root = document) {
+  for (const img of $$('img[data-photo]', root)) {
+    const id = img.dataset.photo;
+    if (!photoUrls[id]) { try { const b = await idb.get(id); if (b) photoUrls[id] = URL.createObjectURL(b); } catch {} }
+    if (photoUrls[id]) img.src = photoUrls[id];
+  }
+}
+const photoImg = (id, cls = '') => `<img data-photo="${id}" class="${cls}" alt="" loading="lazy">`;
+function pickImage() {
+  return new Promise((res) => {
+    const i = document.createElement('input');
+    i.type = 'file'; i.accept = 'image/*';
+    i.onchange = () => res(i.files[0] || null);
+    i.click();
+  });
+}
+async function shrink(file, max = 1280) {
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise((res) => c.toBlob((b) => res(b || file), 'image/jpeg', 0.82));
+  } catch { return file; }
+}
+/* Precisa ser chamado direto de um toque (o Android exige isso para abrir a câmera/galeria). */
+async function addPhoto(meta) {
+  const f = await pickImage();
+  if (!f) return null;
+  const blob = await shrink(f), id = 'p' + uid();
+  try { await idb.put(id, blob); } catch (e) { alert('Não consegui salvar a foto: ' + e.message); return null; }
+  const rec = { id, date: todayKey(), at: Date.now(), ...meta };
+  state.photos.push(rec); save();
+  return rec;
+}
+async function deletePhoto(id) {
+  state.photos = state.photos.filter((x) => x.id !== id); save();
+  try { await idb.del(id); } catch {}
+  if (photoUrls[id]) { URL.revokeObjectURL(photoUrls[id]); delete photoUrls[id]; }
 }
 
 /* ---------------- Consultas ---------------- */
@@ -434,11 +507,36 @@ views.dieta = () => {
             <span class="end">${ic('right')}</span>
           </button></div>`;
       }).join('')}</div>`, `<span class="tag ${done === groups.length ? 'ok' : ''}">${done}/${groups.length}</span>`)
+    + suppSection(log)
     + section('Fora do plano', log.extras.length
         ? `<div class="group">${log.extras.map((x, i) => `<div class="row plain"><span class="body"><div class="t" style="font-weight:500">${esc(x.text)}</div><div class="s num">${esc(x.time)}</div></span><button class="text-btn" style="color:var(--ink-3)" data-act="del-extra" data-v="${i}">Remover</button></div>`).join('')}</div>`
         : `<div class="group empty">Comeu algo diferente? Registre aqui, sem culpa.</div>`,
-      `<button class="text-btn" data-act="add-extra">+ Adicionar</button>`);
+      `<button class="text-btn" data-act="add-extra">+ Adicionar</button>`)
+    + toolsSection();
 };
+
+function suppSection(log) {
+  log.supps = log.supps || {};
+  const add = `<button class="text-btn" data-act="supp-edit">+ Adicionar</button>`;
+  if (!state.supps.length) return section('Suplementos', `<div class="group empty">Ômega 3, creatina, fórmulas… cadastre para lembrar de tomar.</div>`, add);
+  const list = state.supps.slice().sort((a, b) => (a.time || '99').localeCompare(b.time || '99'));
+  return section('Suplementos', `<div class="group">${list.map((sp) => `
+    <div class="meal-row ${log.supps[sp.id] ? 'done' : ''}">
+      <button class="circle" data-act="supp-check" data-v="${sp.id}" aria-pressed="${!!log.supps[sp.id]}" aria-label="Tomei ${esc(sp.name)}">${ic('check')}</button>
+      <button class="meal-open" data-act="supp-edit" data-v="${sp.id}">
+        <span class="body"><div class="t">${sp.time ? `<span class="time num">${esc(sp.time)}</span>` : ''}${esc(sp.name)}</div>${sp.dose ? `<div class="s">${esc(sp.dose)}</div>` : ''}</span>
+        <span class="end">${ic('right')}</span></button></div>`).join('')}</div>`, add);
+}
+
+function toolsSection() {
+  const nRec = RECIPES.length + state.recipes.length;
+  const nPh = state.photos.filter((x) => x.kind === 'refeicao').length;
+  return section('Ferramentas', `<div class="group">
+    <button class="row" data-act="shopping"><span class="badge">${ic('cart')}</span><span class="body"><div class="t">Lista de compras</div><div class="s">Montada a partir do seu plano</div></span><span class="end">${ic('right')}</span></button>
+    <button class="row" data-act="recipes"><span class="badge">${ic('book')}</span><span class="body"><div class="t">Receitas</div><div class="s">${nRec} receitas simples</div></span><span class="end">${ic('right')}</span></button>
+    <button class="row" data-act="food-diary"><span class="badge">${ic('camera')}</span><span class="body"><div class="t">Diário de fotos</div><div class="s">${nPh ? `${nPh} foto${nPh > 1 ? 's' : ''} de refeições` : 'Fotografe seus pratos'}</div></span><span class="end">${ic('right')}</span></button>
+  </div>`);
+}
 
 /* ---------------- Tela: Perfil ---------------- */
 const IMC_FAIXA = (v) => (v < 18.5 ? 'abaixo do peso' : v < 25 ? 'peso adequado' : v < 30 ? 'sobrepeso' : 'obesidade');
@@ -494,6 +592,8 @@ views.progresso = () => {
   return head('Seu progresso', 'Progresso')
     + section('Peso', `<div class="group">${pesoHero}${chartSlot('peso', wPts, 'kg')}</div>`,
       `<button class="text-btn" data-act="morning">+ Pesagem</button>`)
+    + measuresSection()
+    + photosSection()
     + section('Carga por exercício', names.length ? `<div class="group">
         <div class="pad" style="padding-bottom:0"><select data-act="progress-ex" aria-label="Exercício">${names.map((n) => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
         ${lPts.length ? `<div class="hero" style="padding-top:12px"><div class="label">Maior carga recente</div><div class="big">${br(lPts[lPts.length - 1].y)}<small>kg</small></div></div>` : ''}
@@ -518,6 +618,7 @@ function render() {
   $('#view').innerHTML = views[tab]();
   $('#tabs').innerHTML = TABS.map(([k, label, icon]) => `<button data-tab="${k}" class="${k === tab ? 'active' : ''}" aria-current="${k === tab ? 'page' : 'false'}"><span class="pill">${ic(icon)}</span>${label}</button>`).join('');
   $$('[data-chart]').forEach(drawChart);
+  hydratePhotos($('#view'));
 }
 function go(tab) { state.ui.tab = tab; save(); render(); window.scrollTo(0, 0); }
 
@@ -574,6 +675,7 @@ function sheet(html, onSubmit) {
   };
   if (!dlg.open) dlg.showModal();
   f.scrollTop = 0;
+  hydratePhotos(f);
 }
 $('#sheet').addEventListener('click', (ev) => { if (ev.target.id === 'sheet') ev.target.close(); });
 const sheetActions = (ok = 'Salvar') => `<div class="sheet-actions"><button class="btn soft" value="cancel" formnovalidate>Cancelar</button><button class="btn" value="ok">${ok}</button></div>`;
@@ -785,9 +887,11 @@ function mealSheet(gid, oi) {
         <div class="subs hidden" data-subs="${fi}">${f.subs.map((x) => `<div class="sub"><div class="t">${esc(x.name)}</div>${x.qty ? `<div class="s">${esc(x.qty)}</div>` : ''}</div>`).join('')}</div>` : ''}
     </div>`).join('') || '<p class="hint">Nenhum alimento nesta opção.</p>'}
     ${o.notes ? `<details class="notes"><summary>Observações da nutricionista</summary><div>${esc(o.notes).replace(/\n/g, '<br>')}</div></details>` : ''}
+    ${mealPhotos(g)}
     <div class="stack-btns">
       <button class="btn block ${registered ? 'soft' : ''}" type="button" data-act="meal-reg" data-v="${g.id}:${oi}">${registered ? `${ic('check')} Registrada · toque para desfazer` : 'Registrar refeição'}</button>
-      <button class="text-btn" type="button" data-act="add-extra">Comi outra coisa</button>
+      <div class="row-btns"><button class="text-btn" type="button" data-act="meal-photo" data-v="${g.id}">${ic('camera')} Foto do prato</button>
+      <button class="text-btn" type="button" data-act="add-extra">Comi outra coisa</button></div>
     </div>`);
 }
 A['meal-open'] = (gid) => mealSheet(gid);
@@ -875,12 +979,15 @@ A['edit-profile'] = () => {
     save(); render();
   });
 };
-A.export = () => {
-  const blob = new Blob([JSON.stringify({ ...state, active: null }, null, 2)], { type: 'application/json' });
+const blobToData = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+A.export = async () => {
+  const fotos = {};
+  for (const ph of state.photos) { try { const b = await idb.get(ph.id); if (b) fotos[ph.id] = await blobToData(b); } catch {} }
+  const blob = new Blob([JSON.stringify({ ...state, active: null, fotos })], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = `treino-dieta-backup-${todayKey()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 };
 A.import = () => {
   const inp = document.createElement('input');
@@ -890,17 +997,274 @@ A.import = () => {
       const data = JSON.parse(await inp.files[0].text());
       if (!data?.plan || !Array.isArray(data.sessions)) throw new Error('o arquivo não é um backup deste app');
       if (!confirm('Substituir os dados atuais pelo backup?')) return;
+      const fotos = data.fotos || {}; delete data.fotos;
+      for (const [id, url] of Object.entries(fotos)) { await idb.put(id, await (await fetch(url)).blob()); }
       state = migrate(Object.assign(defaultState(), data)); save(); $('#sheet').close(); render();
     } catch (e) { alert('Não consegui importar: ' + e.message); }
   };
   inp.click();
 };
-A.reset = () => {
-  if (!confirm('Apagar TODOS os dados? Isso não pode ser desfeito.')) return;
+A.reset = async () => {
+  if (!confirm('Apagar TODOS os dados, inclusive fotos? Isso não pode ser desfeito.')) return;
   if (!confirm('Tem certeza? Faça um backup antes se quiser guardar.')) return;
+  try { await idb.clear(); } catch {}
   state = defaultState(); stopTimer(); save(); $('#sheet').close(); render();
 };
 
+/* ================= Medidas corporais ================= */
+const MEDIDAS = [['cintura', 'Cintura'], ['abdomen', 'Abdômen'], ['quadril', 'Quadril'], ['peito', 'Peito'], ['braco', 'Braço'], ['coxa', 'Coxa']];
+function measuresSection() {
+  const ms = state.measures.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const add = `<button class="text-btn" data-act="measures">+ Medidas</button>`;
+  if (!ms.length) return section('Medidas', `<div class="group empty">${ic('ruler')}<div>Meça com fita métrica a cada 2 a 4 semanas. A cintura costuma mostrar o progresso antes da balança.</div></div>`, add);
+  const last = ms[ms.length - 1];
+  const firstOf = (k) => ms.find((x) => x[k] != null);
+  const rows = MEDIDAS.filter(([k]) => last[k] != null).map(([k, label]) => {
+    const f = firstOf(k), d = f && f.date !== last.date ? last[k] - f[k] : null;
+    return `<div class="row plain kv"><span class="body"><div class="t">${label}</div></span>
+      <span class="end">${d != null && Math.abs(d) >= 0.1 ? `<span class="tag ${d < 0 ? 'ok' : ''}">${d > 0 ? '+' : ''}${br(d)}</span>` : ''}<span class="v num">${br(last[k])} cm</span></span></div>`;
+  }).join('');
+  return section('Medidas', `<div class="group">${rows}</div><p class="hint" style="padding:8px 4px 0">Última medição: ${fmtDay(last.date)}${ms.length > 1 ? ` · comparando com ${fmtDay(ms[0].date)}` : ''}</p>`, add);
+}
+A.measures = () => {
+  const key = todayKey(), cur = state.measures.find((x) => x.date === key) || {};
+  const prev = state.measures.filter((x) => x.date < key).sort((a, b) => a.date.localeCompare(b.date)).pop() || {};
+  sheet(`<h2>Medidas</h2><p class="lead">Em centímetros. Meça sempre no mesmo ponto, de manhã.</p>
+    <div class="two">${MEDIDAS.map(([k, label]) => `<div class="field"><label>${label}</label><input name="${k}" inputmode="decimal" value="${cur[k] != null ? br(cur[k]) : ''}" placeholder="${prev[k] != null ? br(prev[k]) : 'cm'}"></div>`).join('')}</div>
+    ${sheetActions()}`, (f) => {
+    const rec = { date: key };
+    MEDIDAS.forEach(([k]) => { const v = num(f[k].value); if (v != null) rec[k] = v; });
+    if (Object.keys(rec).length === 1) { alert('Preencha pelo menos uma medida.'); return false; }
+    state.measures = state.measures.filter((x) => x.date !== key).concat(rec);
+    save(); render();
+  });
+};
+
+/* ================= Evolução fotográfica ================= */
+const POSES = [['frente', 'Frente'], ['lado', 'Lado'], ['costas', 'Costas']];
+const poseLabel = (p) => (POSES.find(([k]) => k === p) || [, ''])[1];
+const weightOn = (date) => {
+  const ms = morningSorted().filter((x) => x.peso != null);
+  return (ms.filter((x) => x.date <= date).pop() || ms[0])?.peso ?? null;
+};
+function photosSection() {
+  const ps = state.photos.filter((x) => x.kind === 'corpo').sort((a, b) => b.at - a.at);
+  const add = `<button class="text-btn" data-act="body-photo">+ Foto</button>`;
+  if (!ps.length) return section('Fotos de evolução', `<div class="group empty">${ic('camera')}<div>Tire fotos de frente, de lado e de costas, sempre no mesmo lugar e com a mesma luz.</div></div>`, add);
+  const dates = new Set(ps.map((x) => x.date));
+  return section('Fotos de evolução', `<div class="group">
+      <div class="thumbs">${ps.map((x) => `<button class="thumb" data-act="photo" data-v="${x.id}">${photoImg(x.id)}<span>${fmtDay(x.date)} · ${poseLabel(x.pose)}</span></button>`).join('')}</div>
+      ${dates.size > 1 ? `<div class="pad" style="padding-top:0"><button class="btn soft block" data-act="compare">Comparar antes e depois</button></div>` : ''}
+    </div>`, add);
+}
+A['body-photo'] = () => {
+  sheet(`<h2>Nova foto</h2><p class="lead">Mesma posição, mesmo lugar e mesma luz deixam a comparação justa.</p>
+    <div class="field"><label>Posição</label>${seg('pose', POSES, 'frente')}</div>
+    <div class="stack-btns"><button class="btn block" type="button" data-act="pick-body-photo">${ic('camera')} Tirar ou escolher foto</button>
+    <button class="btn soft block" value="cancel">Cancelar</button></div>`);
+};
+A['pick-body-photo'] = async () => {
+  const pose = $('#sheet-body [name=pose]').value || 'frente';
+  const rec = await addPhoto({ kind: 'corpo', pose });
+  if (rec) { $('#sheet').close(); render(); }
+};
+A.photo = (id) => {
+  const x = state.photos.find((p) => p.id === id);
+  if (!x) return;
+  const w = x.kind === 'corpo' ? weightOn(x.date) : null;
+  sheet(`<h2>${x.kind === 'corpo' ? poseLabel(x.pose) : esc(x.mealName || 'Refeição')}</h2>
+    <p class="lead">${cap(fmtDayLong(x.date))}${w != null ? ` · ${br(w)} kg` : ''}</p>
+    <div class="photo-full">${photoImg(x.id)}</div>
+    <div class="sheet-actions"><button class="btn danger" type="button" data-act="del-photo" data-v="${x.id}">Apagar</button><button class="btn soft" value="cancel">Fechar</button></div>`);
+};
+A['del-photo'] = async (id) => {
+  if (!confirm('Apagar esta foto?')) return;
+  await deletePhoto(id); $('#sheet').close(); render();
+};
+A.compare = (pose) => {
+  const all = state.photos.filter((x) => x.kind === 'corpo');
+  const poses = POSES.filter(([k]) => new Set(all.filter((x) => x.pose === k).map((x) => x.date)).size > 1);
+  if (!poses.length) { alert('Tire fotos da mesma posição em dias diferentes para comparar.'); return; }
+  pose = poses.some(([k]) => k === pose) ? pose : poses[0][0];
+  const ps = all.filter((x) => x.pose === pose).sort((a, b) => a.at - b.at);
+  const a = ps[0], b = ps[ps.length - 1];
+  const wa = weightOn(a.date), wb = weightOn(b.date);
+  const days = Math.round((keyToDate(b.date) - keyToDate(a.date)) / 864e5);
+  sheet(`<h2>Antes e depois</h2><p class="lead">${days} dias de diferença${wa != null && wb != null ? ` · ${wb - wa > 0 ? '+' : ''}${br(wb - wa)} kg` : ''}</p>
+    ${poses.length > 1 ? `<div class="seg" style="margin-bottom:12px">${poses.map(([k, l]) => `<button type="button" data-act="compare" data-v="${k}" class="${k === pose ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
+    <div class="compare">
+      <figure>${photoImg(a.id)}<figcaption>${fmtDay(a.date)}${wa != null ? ` · ${br(wa)} kg` : ''}</figcaption></figure>
+      <figure>${photoImg(b.id)}<figcaption>${fmtDay(b.date)}${wb != null ? ` · ${br(wb)} kg` : ''}</figcaption></figure>
+    </div>
+    <div class="stack-btns"><button class="btn soft block" value="cancel">Fechar</button></div>`);
+};
+
+/* ================= Diário alimentar (fotos dos pratos) ================= */
+function mealPhotos(g) {
+  const day = state.ui.dietDay || todayKey();
+  const ps = state.photos.filter((x) => x.kind === 'refeicao' && x.meal === g.id && x.date === day);
+  if (!ps.length) return '';
+  return `<div class="thumbs flat">${ps.map((x) => `<button class="thumb" type="button" data-act="photo" data-v="${x.id}">${photoImg(x.id)}</button>`).join('')}</div>`;
+}
+A['meal-photo'] = async (gid) => {
+  const g = state.diet.groups.find((x) => x.id === gid);
+  const rec = await addPhoto({ kind: 'refeicao', meal: gid, mealName: g?.name || '', date: state.ui.dietDay || todayKey() });
+  if (rec) { mealSheet(gid); render(); }
+};
+A['food-diary'] = () => {
+  const ps = state.photos.filter((x) => x.kind === 'refeicao').sort((a, b) => b.at - a.at);
+  const byDay = {};
+  ps.forEach((x) => { (byDay[x.date] = byDay[x.date] || []).push(x); });
+  sheet(`<h2>Diário de fotos</h2><p class="lead">Fotografe o prato ao registrar uma refeição. Ajuda você e a nutri a enxergarem a rotina.</p>
+    ${ps.length ? Object.entries(byDay).map(([d, list]) => `<div class="diary-day"><div class="section-title" style="padding-left:0">${cap(fmtDayLong(d))}</div>
+      <div class="grid3">${list.map((x) => `<button class="thumb sq" type="button" data-act="photo" data-v="${x.id}">${photoImg(x.id)}<span>${esc(x.mealName || '')}</span></button>`).join('')}</div></div>`).join('')
+      : `<div class="empty">${ic('camera')}<div>Nenhuma foto ainda. Abra uma refeição e toque em “Foto do prato”.</div></div>`}
+    <div class="stack-btns"><button class="btn soft block" value="cancel">Fechar</button></div>`);
+};
+
+/* ================= Suplementos ================= */
+A['supp-check'] = (id) => {
+  const log = dayLog(state.ui.dietDay || todayKey());
+  log.supps = log.supps || {};
+  if (log.supps[id]) delete log.supps[id]; else log.supps[id] = Date.now();
+  save(); render();
+};
+A['supp-edit'] = (id) => {
+  const sp = state.supps.find((x) => x.id === id) || { name: '', dose: '', time: '' };
+  sheet(`<h2>${id ? 'Editar suplemento' : 'Novo suplemento'}</h2><p class="lead">Use o que a sua nutricionista passou.</p>
+    <div class="field"><label>Nome</label><input name="name" value="${esc(sp.name)}" placeholder="ex.: Ômega 3" required></div>
+    <div class="two"><div class="field"><label>Dose</label><input name="dose" value="${esc(sp.dose)}" placeholder="ex.: 2 cápsulas"></div>
+      <div class="field"><label>Horário</label><input name="time" type="time" value="${esc(sp.time)}"></div></div>
+    ${id ? `<button type="button" class="btn danger block" data-act="supp-del" data-v="${id}">Excluir</button>` : ''}
+    ${sheetActions()}`, (f) => {
+    const name = f.name.value.trim();
+    if (!name) return false;
+    Object.assign(sp, { name, dose: f.dose.value.trim(), time: f.time.value });
+    if (!id) { sp.id = uid(); state.supps.push(sp); }
+    save(); render();
+  });
+};
+A['supp-del'] = (id) => {
+  if (!confirm('Excluir este suplemento?')) return;
+  state.supps = state.supps.filter((x) => x.id !== id);
+  $('#sheet').close(); save(); render();
+};
+
+/* ================= Lista de compras ================= */
+const fmtGrams = (g) => (g >= 1000 ? `${br(g / 1000, 1)} kg` : `${Math.max(10, Math.round(g / 10) * 10)} g`);
+function shoppingItems(days) {
+  const map = new Map();
+  state.diet.groups.forEach((g) => {
+    (g.options[0]?.foods || []).forEach((f) => {
+      const key = f.name.toLowerCase().trim();
+      const gm = [...(f.qty || '').matchAll(/(\d+(?:[.,]\d+)?)\s?g\b/gi)].pop();
+      const it = map.get(key) || { key, name: f.name, grams: 0, times: 0 };
+      it.times += 1;
+      if (gm) it.grams += num(gm[1]);
+      map.set(key, it);
+    });
+  });
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    .map((it) => ({ ...it, label: it.grams ? `~${fmtGrams(it.grams * days)}` : `${it.times * days} porç${it.times * days > 1 ? 'ões' : 'ão'}` }));
+}
+A.shopping = () => {
+  const sh = state.shopping, days = sh.days || 7;
+  const items = shoppingItems(days);
+  const row = (key, name, label, extraIdx) => `<div class="meal-row ${sh.checked[key] ? 'done' : ''}">
+      <button class="circle" type="button" data-act="shop-check" data-v="${esc(key)}" aria-pressed="${!!sh.checked[key]}">${ic('check')}</button>
+      <div class="meal-open" style="cursor:default"><span class="body"><div class="t" style="font-weight:500">${esc(name)}</div></span>
+      <span class="end num">${esc(label)}${extraIdx != null ? ` <button type="button" class="text-btn" style="color:var(--ink-3)" data-act="shop-del" data-v="${extraIdx}">Remover</button>` : ''}</span></div></div>`;
+  sheet(`<h2>Lista de compras</h2>
+    <p class="lead">Somada a partir da opção 1 de cada refeição. Peso de alimento cozido muda em relação ao cru, então ajuste na hora.</p>
+    <div class="field"><label>Comprar para</label><div class="seg">${[[1, '1 dia'], [3, '3 dias'], [7, '7 dias']].map(([v, l]) => `<button type="button" data-act="shop-days" data-v="${v}" class="${v === days ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+    ${items.length || sh.extra.length ? `<div class="group" style="background:var(--surface-2)">
+      ${items.map((it) => row(it.key, it.name, it.label)).join('')}
+      ${sh.extra.map((x, i) => row('extra:' + x, x, '', i)).join('')}
+    </div>` : '<div class="empty">Adicione o plano alimentar para gerar a lista.</div>'}
+    <div class="field" style="margin-top:12px;display:flex;gap:8px"><input name="extra" placeholder="Adicionar item (ex.: azeite)"><button type="button" class="btn sm" style="min-height:48px" data-act="shop-add">Adicionar</button></div>
+    <div class="sheet-actions"><button class="btn soft" type="button" data-act="shop-clear">Desmarcar</button><button class="btn" type="button" data-act="shop-share">Compartilhar</button></div>`);
+};
+A['shop-days'] = (v) => { state.shopping.days = +v; save(); A.shopping(); };
+A['shop-check'] = (key) => { const c = state.shopping.checked; if (c[key]) delete c[key]; else c[key] = 1; save(); A.shopping(); };
+A['shop-add'] = () => { const v = $('#sheet-body [name=extra]').value.trim(); if (v) { state.shopping.extra.push(v); save(); } A.shopping(); };
+A['shop-del'] = (i) => { const x = state.shopping.extra.splice(+i, 1)[0]; delete state.shopping.checked['extra:' + x]; save(); A.shopping(); };
+A['shop-clear'] = () => { state.shopping.checked = {}; save(); A.shopping(); };
+A['shop-share'] = async () => {
+  const sh = state.shopping;
+  const lines = shoppingItems(sh.days || 7).filter((it) => !sh.checked[it.key]).map((it) => `- ${it.name} (${it.label})`)
+    .concat(sh.extra.filter((x) => !sh.checked['extra:' + x]).map((x) => `- ${x}`));
+  const text = `Lista de compras (${sh.days || 7} dias)\n${lines.join('\n')}`;
+  try {
+    if (navigator.share) await navigator.share({ text });
+    else { await navigator.clipboard.writeText(text); alert('Lista copiada.'); }
+  } catch {}
+};
+
+/* ================= Receitas ================= */
+const RECIPES = [
+  { id: 'r1', name: 'Overnight oats com chia e morango', tempo: '5 min + 1 noite', porcoes: 1, tag: 'Café da manhã',
+    ing: ['170 g de iogurte desnatado', '30 g de aveia em flocos', '15 g de semente de chia', '120 g de morango picado', 'Canela a gosto'],
+    prep: ['Misture o iogurte, a aveia e a chia num pote com tampa.', 'Cubra com o morango e polvilhe canela.', 'Deixe na geladeira de um dia para o outro. Come gelado.'] },
+  { id: 'r2', name: 'Panqueca de banana e aveia', tempo: '10 min', porcoes: 1, tag: 'Café da manhã',
+    ing: ['1 banana madura', '2 ovos', '30 g de aveia em flocos', 'Canela a gosto'],
+    prep: ['Amasse a banana e misture com os ovos e a aveia.', 'Aqueça uma frigideira antiaderente untada com um fio de azeite.', 'Despeje a massa, doure dos dois lados em fogo baixo.'] },
+  { id: 'r3', name: 'Crepioca de frango', tempo: '10 min', porcoes: 1, tag: 'Lanche',
+    ing: ['1 ovo', '2 colheres de sopa de goma de tapioca', '1 colher de sopa de água', 'Frango desfiado para rechear', 'Sal de ervas'],
+    prep: ['Bata o ovo com a goma, a água e uma pitada de sal de ervas.', 'Espalhe na frigideira quente e deixe firmar.', 'Recheie com o frango, dobre e sirva.'] },
+  { id: 'r4', name: 'Omelete de legumes', tempo: '10 min', porcoes: 1, tag: 'Jantar',
+    ing: ['2 ovos', '½ tomate picado', 'Cebola picada', '1 punhado de espinafre ou couve', 'Sal de ervas e orégano'],
+    prep: ['Refogue a cebola e as folhas rapidamente.', 'Bata os ovos com o tomate e os temperos e despeje por cima.', 'Tampe e cozinhe em fogo baixo até firmar.'] },
+  { id: 'r5', name: 'Frango desfiado da semana', tempo: '40 min', porcoes: 5, tag: 'Preparo da semana',
+    ing: ['750 g de peito de frango', '3 dentes de alho', '1 cebola', '2 tomates', '1 colher de chá de açafrão', 'Cheiro-verde'],
+    prep: ['Cozinhe o frango na panela de pressão com água e alho por 15 minutos.', 'Desfie e refogue com cebola, tomate e açafrão.', 'Finalize com cheiro-verde. Divida em potes de 150 g e congele.'] },
+  { id: 'r6', name: 'Salada de grão-de-bico', tempo: '10 min', porcoes: 1, tag: 'Almoço',
+    ing: ['110 g de grão-de-bico cozido', '1 tomate', '½ pepino', 'Cebola roxa', 'Suco de ½ limão', '1 fio de azeite', 'Salsinha'],
+    prep: ['Pique os legumes em cubos pequenos.', 'Misture com o grão-de-bico.', 'Tempere com limão, azeite, salsinha e sal de ervas.'] },
+  { id: 'r7', name: 'Legumes assados', tempo: '35 min', porcoes: 3, tag: 'Acompanhamento',
+    ing: ['1 brócolis em floretes', '1 abobrinha', '2 cenouras', '1 berinjela', '1 fio de azeite', 'Alecrim e sal de ervas'],
+    prep: ['Corte tudo em pedaços parecidos.', 'Tempere com azeite, alecrim e sal de ervas.', 'Asse a 200 °C por 25 a 30 minutos, mexendo na metade.'] },
+  { id: 'r8', name: 'Sal de ervas', tempo: '5 min', porcoes: 20, tag: 'Tempero',
+    ing: ['1 parte de sal', '1 parte de ervas secas: alecrim, orégano, salsinha, manjericão'],
+    prep: ['Bata o sal e as ervas no liquidificador.', 'Guarde em pote fechado.', 'Use no preparo no lugar do sal comum: rende o mesmo sabor com menos sódio.'] },
+];
+const allRecipes = () => RECIPES.concat(state.recipes);
+A.recipes = () => {
+  const list = allRecipes();
+  sheet(`<h2>Receitas</h2><p class="lead">Simples, com alimentos comuns em planos de emagrecimento. Ajuste as quantidades ao seu plano.</p>
+    <div class="group" style="background:var(--surface-2)">${list.map((r) => `<button class="row plain" type="button" data-act="recipe" data-v="${r.id}">
+      <span class="body"><div class="t">${esc(r.name)}</div><div class="s">${esc(r.tag || 'Minha receita')} · ${esc(r.tempo || '')}</div></span><span class="end">${ic('right')}</span></button>`).join('')}</div>
+    <div class="stack-btns"><button class="btn soft block" type="button" data-act="recipe-new">${ic('plus')} Nova receita</button></div>`);
+};
+A.recipe = (id) => {
+  const r = allRecipes().find((x) => x.id === id);
+  if (!r) return;
+  const mine = state.recipes.includes(r);
+  sheet(`<button type="button" class="text-btn" data-act="recipes" style="padding-left:0">${ic('left')} Receitas</button>
+    <h2 style="margin-top:6px">${esc(r.name)}</h2>
+    <p class="lead">${[r.tempo, r.porcoes ? `${r.porcoes} ${r.porcoes > 1 ? 'porções' : 'porção'}` : ''].filter(Boolean).map(esc).join(' · ')}</p>
+    <div class="food"><div class="t" style="margin-bottom:6px">Ingredientes</div><ul class="plain-list">${r.ing.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
+    <div class="food"><div class="t" style="margin-bottom:6px">Modo de preparo</div><ol class="steps">${r.prep.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></div>
+    <div class="sheet-actions">${mine ? `<button class="btn danger" type="button" data-act="recipe-del" data-v="${r.id}">Excluir</button>` : '<span></span>'}<button class="btn soft" value="cancel">Fechar</button></div>`);
+};
+A['recipe-new'] = () => {
+  sheet(`<h2>Nova receita</h2>
+    <div class="field"><label>Nome</label><input name="name" required></div>
+    <div class="two"><div class="field"><label>Tempo</label><input name="tempo" placeholder="ex.: 20 min"></div>
+      <div class="field"><label>Porções</label><input name="porcoes" inputmode="numeric"></div></div>
+    <div class="field"><label>Ingredientes (um por linha)</label><textarea name="ing" style="min-height:120px"></textarea></div>
+    <div class="field"><label>Modo de preparo (um passo por linha)</label><textarea name="prep" style="min-height:120px"></textarea></div>
+    ${sheetActions()}`, (f) => {
+    const name = f.name.value.trim();
+    if (!name) return false;
+    const lines = (t) => t.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    state.recipes.push({ id: 'u' + uid(), name, tempo: f.tempo.value.trim(), porcoes: num(f.porcoes.value), tag: 'Minha receita', ing: lines(f.ing.value), prep: lines(f.prep.value) });
+    save(); render();
+  });
+};
+A['recipe-del'] = (id) => {
+  if (!confirm('Excluir esta receita?')) return;
+  state.recipes = state.recipes.filter((x) => x.id !== id); save(); A.recipes();
+};
 /* ---------------- Eventos ---------------- */
 document.addEventListener('click', (ev) => {
   const tabBtn = ev.target.closest('[data-tab]');
