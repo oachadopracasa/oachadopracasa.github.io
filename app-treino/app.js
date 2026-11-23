@@ -34,6 +34,8 @@ const ICONS = {
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   pencil: '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3z"/>',
   play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
+  swap: '<path d="M5 8h13l-3.5-3.5M19 16H6l3.5 3.5"/>',
   history: '<path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/><path d="M12 8v4l3 2"/>',
 };
 const ic = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
@@ -95,11 +97,17 @@ function generatePlan(p) {
 const defaultState = () => {
   const profile = { objetivo: 'emagrecimento', dias: 3, nivel: 'iniciante' };
   return { version: 2, profile, plan: generatePlan(profile), sessions: [], active: null,
-    diet: { raw: '', meals: [] }, dietLog: {}, morning: [], activities: [], ui: { tab: 'hoje' } };
+    diet: { raw: '', groups: [] }, dietLog: {}, morning: [], activities: [], ui: { tab: 'hoje' } };
 };
 
 function migrate(s) {
-  if (!['hoje', 'treino', 'dieta', 'progresso'].includes(s.ui?.tab)) s.ui = { ...(s.ui || {}), tab: 'hoje' };
+  if (s.diet && s.diet.meals && !s.diet.groups) {
+    s.diet.groups = s.diet.meals.map((m) => ({ id: m.id, name: m.name, time: m.time,
+      options: [{ id: uid(), foods: (m.items || []).map((i) => ({ ...splitFood(i), subs: [] })), notes: '' }] }));
+    delete s.diet.meals;
+  }
+  if (!s.diet.groups) s.diet.groups = [];
+  if (!['hoje', 'treino', 'dieta', 'progresso', 'perfil'].includes(s.ui?.tab)) s.ui = { ...(s.ui || {}), tab: 'hoje' };
   s.plan.workouts.forEach((w, k) => {
     if (!w.letter) {
       const m = w.name.match(/^([A-Z])\s*[—–-]\s*(.*)$/);
@@ -143,31 +151,61 @@ function dayLog(key) {
 const estMinutes = (w) => Math.round(w.exercises.reduce((t, e) => t + (e.tipo === 'cardio' ? (num(e.reps) || 15) : e.sets * (0.75 + (e.rest || 0) / 60)), 0) / 5) * 5;
 const morningSorted = () => state.morning.slice().sort((a, b) => a.date.localeCompare(b.date));
 
-function parseDiet(text) {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const headerRe = /^(caf[eé] da manh[ãa]|desjejum|almo[cç]o\b|jantar\b|janta\b|lanche\b|ceia\b|colaç[aã]o|pr[eé][- ]?treino|p[oó]s[- ]?treino|refei[cç][aã]o\b|\d+ª?\s*refei)/i;
-  const timeRe = /\b(\d{1,2})[:h](\d{2})?\b/;
-  const meals = [];
-  let cur = null;
-  for (const raw of lines) {
-    const line = raw.replace(/^[-•*▪◦·]\s*/, '');
-    const isHeader = headerRe.test(line) || (/:$/.test(line) && line.length < 50) || (/^[A-ZÀ-Ú0-9 ()h:–-]{4,}$/.test(line) && line.length < 40);
-    if (isHeader) {
-      const t = line.match(timeRe);
-      cur = {
-        id: uid(),
-        name: line.replace(/:$/, '').replace(/\(?\s*\d{1,2}[:h]\d{0,2}\s*\)?/, '').replace(/\s*[-–]\s*$/, '').trim() || line,
-        time: t ? `${t[1].padStart(2, '0')}:${t[2] || '00'}` : '',
-        items: [],
-      };
-      meals.push(cur);
-    } else {
-      if (!cur) { cur = { id: uid(), name: 'Refeição', time: '', items: [] }; meals.push(cur); }
-      cur.items.push(line);
-    }
-  }
-  return meals;
+/* Lê o plano da nutricionista em texto.
+   Entende: "07:30 - Café da manhã - Opção 2", "Almoço 12:00", "Jantar:";
+   alimentos "Banana - 1 unidade ou 110g" (ou nome e quantidade em linhas separadas);
+   "Substituição: Salada de frutas - 1 porção" logo abaixo do alimento;
+   "Observação:" e o texto que vier depois. */
+const MEAL_RE = /^(caf[eé][- ]da[- ]manh[ãa]|desjejum|almo[cç]o\b|jantar\b|janta\b|lanche\b|ceia\b|colaç[aã]o|pr[eé][- ]?treino|p[oó]s[- ]?treino|refei[cç][aã]o\b|\d+ª?\s*refei)/i;
+const QTY_RE = /^\d+([.,]\d+)?\s*(un|colher|g\b|gr|ml|fil[eé]|fatia|x[ií]cara|copo|por[cç]|concha|escumadeira|pegador|pedaço|ramo|folha|pote)/i;
+const hhmm = (h, m) => `${String(h).padStart(2, '0')}:${m || '00'}`;
+function splitFood(str) {
+  let m = str.match(/^(.+?)\s+[-–—:]\s+(.+)$/);
+  if (m) return { name: m[1].trim(), qty: m[2].trim() };
+  m = str.match(/^(.+?)\s*\((.+)\)\s*$/);
+  if (m && /\d/.test(m[2])) return { name: m[1].trim(), qty: m[2].trim() };
+  m = str.match(/^([^\d]+?)\s+(\d.*)$/);
+  if (m) return { name: m[1].trim(), qty: m[2].trim() };
+  return { name: str.trim(), qty: '' };
 }
+function parsePlan(text) {
+  const groups = [];
+  let opt = null, food = null, inNotes = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim().replace(/^[-•*▪◦·]\s*/, '');
+    if (!line || /^ver op[cç][õo]es/i.test(line)) continue;
+    let header = null;
+    const tm = line.match(/^(\d{1,2})[:h](\d{2})?\s*[-–—]?\s*(.+)$/);
+    if (tm && MEAL_RE.test(tm[3].trim())) header = { time: hhmm(tm[1], tm[2]), rest: tm[3] };
+    else if (MEAL_RE.test(line) && line.length < 60 && !/\d\s?g\b/.test(line)) {
+      const t = line.match(/\b(\d{1,2})[:h](\d{2})?\b/);
+      header = { time: t ? hhmm(t[1], t[2]) : '', rest: line.replace(/\(?\s*(às\s*)?\d{1,2}[:h]\d{0,2}\s*\)?/i, '') };
+    }
+    if (header) {
+      let name = header.rest.replace(/:\s*$/, '').trim();
+      const om = name.match(/\s*[-–—(]?\s*op[çc][aã]o\s*(\d+)\s*\)?\s*$/i);
+      if (om) name = name.slice(0, om.index);
+      name = cap(name.replace(/[-–—\s]+$/, '').replace(/caf[eé]-da-manh/i, 'Café da manh').trim()) || 'Refeição';
+      let g = groups.find((x) => x.name.toLowerCase() === name.toLowerCase() && x.time === header.time);
+      if (!g) { g = { id: uid(), name, time: header.time, options: [] }; groups.push(g); }
+      opt = { id: uid(), foods: [], notes: '' }; g.options.push(opt);
+      food = null; inNotes = false;
+      continue;
+    }
+    if (!opt) { opt = { id: uid(), foods: [], notes: '' }; groups.push({ id: uid(), name: 'Refeição', time: '', options: [opt] }); }
+    const obs = line.match(/^(obs(erva[cç](ão|ões))?\.?|orienta[cç](ão|ões))\s*:?\s*(.*)$/i);
+    if (obs) { inNotes = true; if (obs[5]) opt.notes += obs[5] + '\n'; continue; }
+    if (inNotes) { opt.notes += raw.trim() + '\n'; continue; }
+    const sub = line.match(/^(substitui[cç](ão|ões)|substituir|troca[rs]?|ou)\s*(por)?\s*:\s*(.+)$/i) || line.match(/^(⇄|↔|>)\s*(.+)$/);
+    if (sub && food) { food.subs.push(splitFood(sub[sub.length - 1])); continue; }
+    if (food && !food.qty && QTY_RE.test(line)) { food.qty = line; continue; }
+    food = { ...splitFood(line), subs: [] };
+    opt.foods.push(food);
+  }
+  groups.forEach((g) => g.options.forEach((o) => { o.notes = o.notes.trim(); }));
+  return groups;
+}
+const mealCheck = (log, g) => { const c = log.checked[g.id]; return c == null ? null : (typeof c === 'object' ? c : { opt: 0 }); };
 
 /* ---------------- Gráfico de linha (uma série, toque para ver o valor) ---------------- */
 const chartData = {};
@@ -219,6 +257,7 @@ function drawChart(el) {
 /* ---------------- Peças de tela ---------------- */
 const head = (kicker, title, action = '') => `<header class="head"><div><div class="kicker">${kicker}</div><h1>${title}</h1></div>${action}</header>`;
 const section = (title, body, action = '') => `<section class="section"><div class="section-title"><span>${title}</span>${action}</div>${body}</section>`;
+const initials = (n) => n.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
 const greet = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
 
 /* ---------------- Tela: Hoje ---------------- */
@@ -231,9 +270,10 @@ views.hoje = () => {
   const ms = morningSorted();
   const m = ms.find((x) => x.date === key);
   const prev = ms.filter((x) => x.date < key && x.peso != null).pop();
-  const meals = state.diet.meals;
+  const meals = state.diet.groups;
   const log = dayLog(key);
-  const mealsDone = meals.filter((x) => log.checked[x.id]).length;
+  const mealsDone = meals.filter((x) => mealCheck(log, x)).length;
+  const p = state.profile;
   const acts = state.activities.filter((a) => a.date === key);
 
   const pesagem = `<button class="row" data-act="morning">
@@ -276,8 +316,14 @@ views.hoje = () => {
         <div class="s">${acts.length ? acts.map((a) => `${esc(a.tipo)}${a.minutos ? ` ${a.minutos} min` : ''}`).join(', ') : 'Caminhada, bike… toque para registrar'}</div></span>
       <span class="end">${ic('plus')}</span></button>`;
 
-  return head(cap(new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })), greet(),
-      `<button class="icon-btn" data-act="settings" aria-label="Ajustes">${ic('sliders')}</button>`)
+  const incomplete = !p.nome || !p.altura;
+  return head(cap(new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })),
+      greet() + (p.nome ? `, ${esc(p.nome.split(' ')[0])}` : ''),
+      `<button class="avatar" data-act="goto" data-v="perfil" aria-label="Perfil">${p.nome ? esc(initials(p.nome)) : ic('user')}</button>`)
+    + (incomplete ? `<div class="section"><button class="row group" data-act="edit-profile">
+        <span class="badge accent">${ic('user')}</span>
+        <span class="body"><div class="t">Complete seu perfil</div><div class="s">Nome, altura, peso e meta</div></span>
+        <span class="end">${ic('right')}</span></button></div>` : '')
     + section('Seu dia', `<div class="group">${pesagem}${treino}${alimentacao}${atividade}</div>`)
     + section('Esta semana', weekStrip());
 };
@@ -306,7 +352,7 @@ views.treino = () => {
   const nw = nextWorkout();
   const ws = state.plan.workouts;
   return head(`${state.profile.dias}x por semana · ${LEVEL_LABEL[state.profile.nivel]}`, 'Treino',
-      `<button class="icon-btn" data-act="profile" aria-label="Ajustar plano">${ic('sliders')}</button>`)
+      `<button class="icon-btn" data-act="plan" aria-label="Ajustar plano">${ic('sliders')}</button>`)
     + section('Seus treinos', ws.length ? `<div class="group">${ws.map((w) => `
         <button class="row" data-act="workout" data-v="${w.id}">
           <span class="badge ${nw && w.id === nw.id ? 'accent' : ''}">${esc(w.letter)}</span>
@@ -358,17 +404,17 @@ function activeView() {
 
 /* ---------------- Tela: Dieta ---------------- */
 views.dieta = () => {
-  const meals = state.diet.meals;
-  if (!meals.length) {
+  const groups = state.diet.groups;
+  if (!groups.length) {
     return head('Plano da nutricionista', 'Alimentação')
       + section('Adicionar plano', `<div class="group pad">
-        <p class="hint" style="margin-bottom:12px">Cole o texto do plano. Cada refeição numa linha (ex.: “Café da manhã 07:00”), seguida dos alimentos.</p>
-        <textarea id="diet-raw" placeholder="Café da manhã 07:00&#10;2 ovos mexidos&#10;1 fatia de pão integral&#10;&#10;Almoço 12:00&#10;100 g de arroz&#10;120 g de frango">${esc(state.diet.raw)}</textarea>
+        <p class="hint" style="margin-bottom:12px">Cole o texto do plano. Pode ter opções, substituições e observações, assim:</p>
+        <textarea id="diet-raw" placeholder="07:30 - Café da manhã&#10;Iogurte desnatado - 170 g&#10;Aveia em flocos - 30 g&#10;Morango - 10 unidades ou 120 g&#10;Substituição: Salada de frutas - 1 porção&#10;&#10;07:30 - Café da manhã - Opção 2&#10;Pão integral - 2 fatias&#10;&#10;12:00 - Almoço&#10;Arroz branco cozido - 125 g&#10;Peito de frango grelhado - 150 g&#10;Observação: legumes e folhas à vontade">${esc(state.diet.raw)}</textarea>
         <div class="stack-btns"><button class="btn block" data-act="save-diet">Salvar plano</button></div></div>`);
   }
   const key = state.ui.dietDay || todayKey();
   const log = dayLog(key);
-  const done = meals.filter((m) => log.checked[m.id]).length;
+  const done = groups.filter((g) => mealCheck(log, g)).length;
   return head('Plano da nutricionista', 'Alimentação',
       `<button class="icon-btn" data-act="edit-diet" aria-label="Editar plano">${ic('pencil')}</button>`)
     + `<div class="section"><div class="day-switch">
@@ -376,16 +422,55 @@ views.dieta = () => {
         <b>${key === todayKey() ? 'Hoje' : cap(fmtDayLong(key))}</b>
         <button class="icon-btn" data-act="diet-day" data-v="1" aria-label="Próximo dia" ${key >= todayKey() ? 'disabled style="opacity:.3"' : ''}>${ic('right')}</button>
       </div></div>`
-    + section('Refeições', `<div class="group">${meals.map((m) => `
-        <button class="meal ${log.checked[m.id] ? 'done' : ''}" data-act="meal" data-v="${m.id}" aria-pressed="${!!log.checked[m.id]}">
-          <span class="circle">${ic('check')}</span>
-          <span><div class="t">${esc(m.name)}${m.time ? `<span class="time num">${esc(m.time)}</span>` : ''}</div>
-          <ul>${m.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></span>
-        </button>`).join('')}</div>`, `<span class="tag ${done === meals.length ? 'ok' : ''}">${done}/${meals.length}</span>`)
+    + section('Refeições', `<div class="group">${groups.map((g) => {
+        const c = mealCheck(log, g);
+        const o = g.options[c ? c.opt : 0] || g.options[0];
+        const sub = c ? `Registrada${g.options.length > 1 ? ` · Opção ${c.opt + 1}` : ''}`
+          : `${g.options.length > 1 ? `${g.options.length} opções · ` : ''}${o.foods.slice(0, 3).map((f) => f.name).join(', ')}${o.foods.length > 3 ? '…' : ''}`;
+        return `<div class="meal-row ${c ? 'done' : ''}">
+          <button class="circle" data-act="meal-quick" data-v="${g.id}" aria-pressed="${!!c}" aria-label="Marcar ${esc(g.name)}">${ic('check')}</button>
+          <button class="meal-open" data-act="meal-open" data-v="${g.id}">
+            <span class="body"><div class="t">${g.time ? `<span class="time num">${esc(g.time)}</span>` : ''}${esc(g.name)}</div><div class="s">${esc(sub)}</div></span>
+            <span class="end">${ic('right')}</span>
+          </button></div>`;
+      }).join('')}</div>`, `<span class="tag ${done === groups.length ? 'ok' : ''}">${done}/${groups.length}</span>`)
     + section('Fora do plano', log.extras.length
         ? `<div class="group">${log.extras.map((x, i) => `<div class="row plain"><span class="body"><div class="t" style="font-weight:500">${esc(x.text)}</div><div class="s num">${esc(x.time)}</div></span><button class="text-btn" style="color:var(--ink-3)" data-act="del-extra" data-v="${i}">Remover</button></div>`).join('')}</div>`
         : `<div class="group empty">Comeu algo diferente? Registre aqui, sem culpa.</div>`,
       `<button class="text-btn" data-act="add-extra">+ Adicionar</button>`);
+};
+
+/* ---------------- Tela: Perfil ---------------- */
+const IMC_FAIXA = (v) => (v < 18.5 ? 'abaixo do peso' : v < 25 ? 'peso adequado' : v < 30 ? 'sobrepeso' : 'obesidade');
+const latestWeight = () => morningSorted().filter((x) => x.peso != null).pop()?.peso ?? null;
+views.perfil = () => {
+  const p = state.profile;
+  const w = latestWeight();
+  const imc = w && p.altura ? w / ((p.altura / 100) ** 2) : null;
+  const kv = (label, value) => `<button class="row plain kv" data-act="edit-profile"><span class="body"><div class="t">${label}</div></span><span class="end">${value != null && value !== '' ? `<span class="v num">${value}</span>` : '<span>Adicionar</span>'}</span></button>`;
+  return `<header class="head profile-head"><div class="avatar big">${p.nome ? esc(initials(p.nome)) : ic('user')}</div>
+      <div><div class="kicker">Seu perfil</div><h1>${esc(p.nome || 'Perfil')}</h1></div></header>`
+    + (imc || (w && p.meta) ? `<div class="section two">
+        ${imc ? `<div class="group pad"><div class="hint">IMC</div><div class="stat num">${br(imc)}</div><div class="hint">${IMC_FAIXA(imc)}</div></div>` : ''}
+        ${w && p.meta ? `<div class="group pad"><div class="hint">Até a meta</div><div class="stat num">${Math.abs(w - p.meta) < 0.05 ? 'Chegou!' : br(Math.abs(w - p.meta)) + '<small> kg</small>'}</div><div class="hint">meta de ${br(p.meta)} kg</div></div>` : ''}
+      </div>` : '')
+    + section('Dados pessoais', `<div class="group">
+        ${kv('Nome', p.nome ? esc(p.nome) : '')}
+        ${kv('Idade', p.idade ? `${p.idade} anos` : '')}
+        ${kv('Sexo', p.sexo ? (p.sexo === 'm' ? 'Masculino' : 'Feminino') : '')}
+        ${kv('Altura', p.altura ? `${br(p.altura / 100, 2)} m` : '')}
+        ${kv('Peso atual', w != null ? `${br(w)} kg` : '')}
+        ${kv('Meta de peso', p.meta ? `${br(p.meta)} kg` : '')}
+        ${kv('Nutricionista', p.nutri ? esc(p.nutri) : '')}
+      </div>`, `<button class="text-btn" data-act="edit-profile">Editar</button>`)
+    + section('Treino', `<div class="group"><button class="row plain" data-act="plan"><span class="body"><div class="t">Plano de treino</div>
+        <div class="s">Emagrecimento · ${p.dias}x por semana · ${LEVEL_LABEL[p.nivel]}</div></span><span class="end">${ic('right')}</span></button></div>`)
+    + section('Seus dados', `<div class="group">
+        <button class="row plain" data-act="export"><span class="body"><div class="t">Exportar backup</div><div class="s">Salva um arquivo com todos os seus dados</div></span></button>
+        <button class="row plain" data-act="import"><span class="body"><div class="t">Importar backup</div><div class="s">Restaura a partir de um arquivo</div></span></button>
+      </div>
+      <p class="hint" style="padding:10px 4px 0">Tudo fica salvo só neste celular. Em breve: assistente com IA e atividades automáticas do relógio.</p>
+      <div class="stack-btns"><button class="btn danger block" data-act="reset">Apagar todos os dados</button></div>`);
 };
 
 /* ---------------- Tela: Progresso ---------------- */
@@ -427,7 +512,7 @@ views.progresso = () => {
 };
 
 /* ---------------- Render ---------------- */
-const TABS = [['hoje', 'Hoje', 'home'], ['treino', 'Treino', 'dumbbell'], ['dieta', 'Dieta', 'meal'], ['progresso', 'Progresso', 'chart']];
+const TABS = [['hoje', 'Hoje', 'home'], ['treino', 'Treino', 'dumbbell'], ['dieta', 'Dieta', 'meal'], ['progresso', 'Progresso', 'chart'], ['perfil', 'Perfil', 'user']];
 function render() {
   const tab = state.ui.tab;
   $('#view').innerHTML = views[tab]();
@@ -599,7 +684,7 @@ A['timer-add'] = (v) => {
 };
 A['timer-skip'] = () => stopTimer();
 
-A.profile = () => {
+A.plan = () => {
   const p = state.profile;
   sheet(`<h2>Ajustar plano</h2><p class="lead">Objetivo: emagrecimento. Outros objetivos chegam com a IA.</p>
     <div class="field"><label>Dias por semana</label>${seg('dias', [2, 3, 4, 5, 6].map((d) => [d, d]), p.dias)}</div>
@@ -669,24 +754,55 @@ A['progress-ex'] = (v) => { state.ui.progressEx = v; save(); render(); };
 A['save-diet'] = () => {
   const raw = $('#diet-raw').value.trim();
   if (!raw) return alert('Cole o texto do plano primeiro.');
-  const meals = parseDiet(raw);
-  state.diet = { raw, meals }; save(); render();
-  sheet(`<h2>Plano salvo</h2><p class="lead">Encontrei ${meals.length} refeições:</p>
-    <div class="group" style="background:var(--surface-2)">${meals.map((m) => `<div class="row plain" style="min-height:48px"><span class="body"><div class="t" style="font-weight:500">${esc(m.name)}</div></span><span class="end num">${esc(m.time)} · ${m.items.length} itens</span></div>`).join('')}</div>
+  const groups = parsePlan(raw);
+  state.diet = { raw, groups }; save(); render();
+  sheet(`<h2>Plano salvo</h2><p class="lead">Encontrei ${groups.length} refeições:</p>
+    <div class="group" style="background:var(--surface-2)">${groups.map((g) => `<div class="row plain" style="min-height:48px"><span class="body"><div class="t" style="font-weight:500">${g.time ? `<span class="num" style="color:var(--ink-3);margin-right:8px">${esc(g.time)}</span>` : ''}${esc(g.name)}</div></span><span class="end">${g.options.length > 1 ? `${g.options.length} opções` : `${g.options[0].foods.length} itens`}</span></div>`).join('')}</div>
     <p class="hint" style="margin-top:12px">Se algo ficou errado, toque no lápis e ajuste o texto.</p>
     <div class="stack-btns"><button class="btn block" value="ok">Ok</button></div>`);
 };
 A['edit-diet'] = () => {
-  sheet(`<h2>Editar plano</h2><p class="lead">Cada refeição numa linha, seguida dos alimentos.</p>
-    <textarea name="raw" style="min-height:45vh">${esc(state.diet.raw)}</textarea>${sheetActions()}`, (f) => {
-    const raw = f.raw.value.trim(), old = state.diet.meals, meals = parseDiet(raw);
-    meals.forEach((m) => { const o = old.find((x) => x.name === m.name); if (o) m.id = o.id; });
-    state.diet = { raw, meals }; save(); render();
+  sheet(`<h2>Editar plano</h2><p class="lead">Cada refeição numa linha com o horário. Alimento e quantidade separados por “-”.</p>
+    <textarea name="raw" style="min-height:50vh">${esc(state.diet.raw)}</textarea>${sheetActions()}`, (f) => {
+    const raw = f.raw.value.trim(), old = state.diet.groups, groups = parsePlan(raw);
+    groups.forEach((g) => { const o = old.find((x) => x.name === g.name && x.time === g.time); if (o) g.id = o.id; });
+    state.diet = { raw, groups }; save(); render();
   });
 };
-A.meal = (id) => {
+function mealSheet(gid, oi) {
+  const g = state.diet.groups.find((x) => x.id === gid);
+  if (!g) return;
+  const log = dayLog(state.ui.dietDay || todayKey()), c = mealCheck(log, g);
+  oi = oi ?? (c ? c.opt : 0);
+  const o = g.options[oi] || g.options[0];
+  const registered = c && c.opt === oi;
+  sheet(`<h2>${g.time ? `<span class="num" style="color:var(--ink-3)">${esc(g.time)}</span> · ` : ''}${esc(g.name)}</h2>
+    <p class="lead">${g.options.length > 1 ? `${g.options.length} opções — escolha a que você vai comer` : `${o.foods.length} alimentos`}</p>
+    ${g.options.length > 1 ? `<div class="seg" style="margin-bottom:14px">${g.options.map((_, i) => `<button type="button" data-act="meal-opt" data-v="${g.id}:${i}" class="${i === oi ? 'on' : ''}">Opção ${i + 1}</button>`).join('')}</div>` : ''}
+    ${o.foods.map((f, fi) => `<div class="food">
+      <div class="t">${esc(f.name)}</div>${f.qty ? `<div class="s">${esc(f.qty)}</div>` : ''}
+      ${f.subs.length ? `<button type="button" class="subs-btn" data-act="subs" data-v="${fi}">${ic('swap')} Substituições (${f.subs.length})</button>
+        <div class="subs hidden" data-subs="${fi}">${f.subs.map((x) => `<div class="sub"><div class="t">${esc(x.name)}</div>${x.qty ? `<div class="s">${esc(x.qty)}</div>` : ''}</div>`).join('')}</div>` : ''}
+    </div>`).join('') || '<p class="hint">Nenhum alimento nesta opção.</p>'}
+    ${o.notes ? `<details class="notes"><summary>Observações da nutricionista</summary><div>${esc(o.notes).replace(/\n/g, '<br>')}</div></details>` : ''}
+    <div class="stack-btns">
+      <button class="btn block ${registered ? 'soft' : ''}" type="button" data-act="meal-reg" data-v="${g.id}:${oi}">${registered ? `${ic('check')} Registrada · toque para desfazer` : 'Registrar refeição'}</button>
+      <button class="text-btn" type="button" data-act="add-extra">Comi outra coisa</button>
+    </div>`);
+}
+A['meal-open'] = (gid) => mealSheet(gid);
+A['meal-opt'] = (v) => { const [gid, i] = v.split(':'); mealSheet(gid, +i); };
+A.subs = (fi) => $(`[data-subs="${fi}"]`)?.classList.toggle('hidden');
+A['meal-reg'] = (v) => {
+  const [gid, i] = v.split(':');
+  const log = dayLog(state.ui.dietDay || todayKey()), c = log.checked[gid];
+  if (c != null && (typeof c !== 'object' || c.opt === +i)) delete log.checked[gid];
+  else log.checked[gid] = { opt: +i, at: Date.now() };
+  $('#sheet').close(); save(); render();
+};
+A['meal-quick'] = (gid) => {
   const log = dayLog(state.ui.dietDay || todayKey());
-  if (log.checked[id]) delete log.checked[id]; else log.checked[id] = Date.now();
+  if (log.checked[gid] != null) delete log.checked[gid]; else log.checked[gid] = { opt: 0, at: Date.now() };
   save(); render();
 };
 A['diet-day'] = (v) => {
@@ -735,16 +851,29 @@ A.activity = () => {
 A['del-activity'] = (id) => { state.activities = state.activities.filter((a) => a.id !== id); save(); render(); };
 
 /* Ajustes e backup */
-A.settings = () => {
-  sheet(`<h2>Ajustes</h2>
-    <div class="group" style="background:var(--surface-2)">
-      <button class="row plain" type="button" data-act="profile"><span class="body"><div class="t">Plano de treino</div><div class="s">${state.profile.dias}x por semana · ${LEVEL_LABEL[state.profile.nivel]}</div></span><span class="end">${ic('right')}</span></button>
-      <button class="row plain" type="button" data-act="export"><span class="body"><div class="t">Exportar backup</div><div class="s">Salva um arquivo com todos os seus dados</div></span></button>
-      <button class="row plain" type="button" data-act="import"><span class="body"><div class="t">Importar backup</div><div class="s">Restaura a partir de um arquivo</div></span></button>
-    </div>
-    <p class="hint" style="margin:14px 2px">Seus dados ficam só neste celular. Em breve: assistente com IA e atividades automáticas do relógio Amazfit.</p>
-    <button class="btn danger block" type="button" data-act="reset">Apagar todos os dados</button>
-    <div class="stack-btns"><button class="btn soft block" value="cancel">Fechar</button></div>`);
+A['edit-profile'] = () => {
+  const p = state.profile, w = latestWeight();
+  sheet(`<h2>Seus dados</h2><p class="lead">Ficam só no seu celular. Ajudam a acompanhar a evolução e, no futuro, a IA.</p>
+    <div class="field"><label>Nome</label><input name="nome" value="${esc(p.nome || '')}" autocomplete="name" placeholder="Como quer ser chamado"></div>
+    <div class="two"><div class="field"><label>Idade</label><input name="idade" inputmode="numeric" value="${p.idade || ''}" placeholder="anos"></div>
+      <div class="field"><label>Altura (cm)</label><input name="altura" inputmode="numeric" value="${p.altura || ''}" placeholder="ex.: 175"></div></div>
+    <div class="field"><label>Sexo</label><div data-toggle>${seg('sexo', [['m', 'Masculino'], ['f', 'Feminino']], p.sexo || '')}</div></div>
+    <div class="two"><div class="field"><label>Peso atual (kg)</label><input name="peso" inputmode="decimal" value="${w != null ? br(w) : ''}"></div>
+      <div class="field"><label>Meta (kg)</label><input name="meta" inputmode="decimal" value="${p.meta ? br(p.meta) : ''}"></div></div>
+    <div class="field"><label>Nutricionista</label><input name="nutri" value="${esc(p.nutri || '')}" placeholder="opcional"></div>
+    ${sheetActions()}`, (f) => {
+    const alt = num(f.altura.value);
+    Object.assign(p, {
+      nome: f.nome.value.trim(), idade: num(f.idade.value), sexo: f.sexo.value,
+      altura: alt && alt < 3 ? Math.round(alt * 100) : alt, meta: num(f.meta.value), nutri: f.nutri.value.trim(),
+    });
+    const peso = num(f.peso.value);
+    if (peso != null && peso !== w) {
+      const key = todayKey(), cur = state.morning.find((x) => x.date === key);
+      if (cur) cur.peso = peso; else state.morning.push({ date: key, peso, sono: null, disposicao: null });
+    }
+    save(); render();
+  });
 };
 A.export = () => {
   const blob = new Blob([JSON.stringify({ ...state, active: null }, null, 2)], { type: 'application/json' });

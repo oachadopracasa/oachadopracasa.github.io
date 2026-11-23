@@ -279,7 +279,7 @@ dialog.sheet::backdrop { background: var(--scrim); }
 /* ---------- Barra de abas ---------- */
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tabbar) + env(safe-area-inset-bottom));
   padding: 6px 8px env(safe-area-inset-bottom);
   background: var(--surface); border-top: 1px solid var(--hair);
@@ -289,6 +289,58 @@ dialog.sheet::backdrop { background: var(--scrim); }
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   font-size: 12px; font-weight: 600;
 }
-.tabs .pill { width: 60px; height: 32px; border-radius: 16px; display: grid; place-items: center; transition: background .15s; }
+.tabs .pill { width: 52px; height: 32px; border-radius: 16px; display: grid; place-items: center; transition: background .15s; }
 .tabs button.active { color: var(--ink); }
 .tabs button.active .pill { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- Avatar e perfil ---------- */
+.avatar {
+  width: 44px; height: 44px; border-radius: 50%; border: 0; cursor: pointer; flex: none;
+  display: grid; place-items: center; background: var(--ink); color: var(--bg);
+  font-weight: 700; font-size: 15px; letter-spacing: .02em;
+}
+.avatar.big { width: 64px; height: 64px; font-size: 22px; cursor: default; }
+.avatar .i { width: 22px; height: 22px; }
+.avatar.big .i { width: 30px; height: 30px; }
+.profile-head { justify-content: flex-start; align-items: center; gap: 16px; }
+.section.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat { font-size: 28px; font-weight: 700; letter-spacing: -.02em; margin: 2px 0; }
+.stat small { font-size: 15px; color: var(--ink-2); font-weight: 600; }
+.kv { min-height: 54px; }
+.kv .t { font-weight: 500; }
+.kv .end { color: var(--ink-3); }
+.kv .v { color: var(--ink); font-weight: 600; font-size: 15px; }
+.row.group { border-radius: var(--r); background: var(--surface); }
+
+/* ---------- Refeições ---------- */
+.meal-row { display: flex; align-items: center; position: relative; }
+.meal-row + .meal-row::before { content: ""; position: absolute; top: 0; left: 64px; right: 0; border-top: 1px solid var(--hair); }
+.meal-row .circle {
+  width: 32px; height: 32px; margin: 0 0 0 16px; border-radius: 50%; border: 0; flex: none; cursor: pointer;
+  display: grid; place-items: center; background: none; box-shadow: inset 0 0 0 2px var(--hair); color: transparent;
+}
+.meal-row.done .circle { background: var(--ok); box-shadow: none; color: var(--surface); }
+.meal-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 16px 16px 16px 14px; background: none; border: 0; text-align: left; cursor: pointer; }
+.meal-open:active { background: var(--surface-2); }
+.meal-open .body { flex: 1; min-width: 0; }
+.meal-open .t { font-weight: 600; font-size: 16px; }
+.meal-open .time { color: var(--ink-3); font-weight: 600; margin-right: 8px; }
+.meal-open .s { color: var(--ink-2); font-size: 14px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meal-open .end { color: var(--ink-3); }
+.meal-row.done .meal-open .t { color: var(--ink-2); }
+
+.food { background: var(--surface-2); border-radius: 14px; padding: 14px 16px; margin-bottom: 8px; }
+.food .t { font-weight: 600; font-size: 16px; }
+.food .s { color: var(--ink-2); font-size: 15px; margin-top: 2px; }
+.subs-btn {
+  margin-top: 10px; border: 0; cursor: pointer; border-radius: 10px; padding: 7px 12px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 14px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.subs-btn .i { width: 18px; height: 18px; }
+.subs { margin-top: 10px; border-left: 2px solid var(--accent); padding-left: 12px; }
+.sub + .sub { margin-top: 8px; }
+.sub .t { font-size: 15px; }
+details.notes { background: var(--surface-2); border-radius: 14px; padding: 14px 16px; margin-top: 4px; }
+details.notes summary { font-weight: 600; cursor: pointer; list-style-position: outside; }
+details.notes div { color: var(--ink-2); font-size: 15px; line-height: 1.55; margin-top: 10px; }
