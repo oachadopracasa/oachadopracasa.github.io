@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f1115">
+  <meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e0f10" media="(prefers-color-scheme: dark)">
   <title>Treino &amp; Dieta</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -11,35 +12,24 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="topbar">
-    <h1 id="title">Hoje</h1>
-    <span id="topdate" class="muted"></span>
-  </header>
-
   <main id="view"></main>
 
   <div id="timer" class="timer hidden" role="status" aria-live="polite">
-    <div class="timer-bar"><div id="timer-fill"></div></div>
-    <div class="timer-row">
-      <button class="btn small ghost" data-act="timer-add" data-v="-15">−15s</button>
+    <div class="timer-top">
       <div class="timer-main">
-        <div class="muted small">Descanso</div>
-        <div id="timer-text">00:00</div>
+        <div class="timer-label">Descanso</div>
+        <div id="timer-text" class="timer-text">0:00</div>
       </div>
-      <button class="btn small ghost" data-act="timer-add" data-v="15">+15s</button>
-      <button class="btn small" data-act="timer-skip">Pular</button>
+      <button class="tbtn" data-act="timer-add" data-v="-15">−15</button>
+      <button class="tbtn" data-act="timer-add" data-v="15">+15</button>
+      <button class="tbtn go" data-act="timer-skip">Pular</button>
     </div>
+    <div class="timer-track"><div id="timer-fill" class="timer-fill"></div></div>
   </div>
 
-  <nav class="tabs">
-    <button data-tab="hoje"><span>🏠</span>Hoje</button>
-    <button data-tab="treino"><span>🏋️</span>Treino</button>
-    <button data-tab="dieta"><span>🥗</span>Dieta</button>
-    <button data-tab="manha"><span>⚖️</span>Manhã</button>
-    <button data-tab="mais"><span>☰</span>Mais</button>
-  </nav>
+  <nav class="tabs" id="tabs"></nav>
 
-  <dialog id="modal"><form method="dialog" id="modal-body"></form></dialog>
+  <dialog id="sheet" class="sheet"><form method="dialog" id="sheet-body" class="sheet-body"></form></dialog>
 
   <script src="app.js"></script>
 </body>

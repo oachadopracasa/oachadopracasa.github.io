@@ -1,5 +1,5 @@
 // Cache do app para funcionar offline (ex.: academia sem sinal).
-const CACHE = 'treino-v1';
+const CACHE = 'treino-v2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
