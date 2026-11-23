@@ -103,7 +103,7 @@ const defaultState = () => {
   const profile = { objetivo: 'emagrecimento', dias: 3, nivel: 'iniciante' };
   return { version: 2, profile, plan: generatePlan(profile), sessions: [], active: null,
     diet: { raw: '', groups: [] }, dietLog: {}, morning: [], activities: [], ui: { tab: 'hoje' },
-    photos: [], measures: [], supps: [], recipes: [], shopping: { checked: {}, extra: [], days: 7 } };
+    supps: [], recipes: [], shopping: { checked: {}, extra: [], days: 7 } };
 };
 
 function migrate(s) {
@@ -113,7 +113,7 @@ function migrate(s) {
     delete s.diet.meals;
   }
   if (!s.diet.groups) s.diet.groups = [];
-  ['photos', 'measures', 'supps', 'recipes'].forEach((k) => { if (!Array.isArray(s[k])) s[k] = []; });
+  ['supps', 'recipes'].forEach((k) => { if (!Array.isArray(s[k])) s[k] = []; });
   if (!s.shopping) s.shopping = { checked: {}, extra: [], days: 7 };
   if (!['hoje', 'treino', 'dieta', 'progresso', 'perfil'].includes(s.ui?.tab)) s.ui = { ...(s.ui || {}), tab: 'hoje' };
   s.plan.workouts.forEach((w, k) => {
@@ -135,37 +135,7 @@ function save() {
   catch (e) { alert('Não consegui salvar no celular: ' + e.message); }
 }
 
-/* ---------------- Fotos (guardadas no IndexedDB do celular) ---------------- */
-const idb = (() => {
-  let dbp;
-  const open = () => dbp || (dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('treino-fotos', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('fotos');
-    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-  }));
-  const run = async (mode, fn) => {
-    const db = await open();
-    return new Promise((res, rej) => {
-      const t = db.transaction('fotos', mode), req = fn(t.objectStore('fotos'));
-      t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error);
-    });
-  };
-  return {
-    put: (id, b) => run('readwrite', (st) => st.put(b, id)),
-    get: (id) => run('readonly', (st) => st.get(id)),
-    del: (id) => run('readwrite', (st) => st.delete(id)),
-    clear: () => run('readwrite', (st) => st.clear()),
-  };
-})();
-const photoUrls = {};
-async function hydratePhotos(root = document) {
-  for (const img of $$('img[data-photo]', root)) {
-    const id = img.dataset.photo;
-    if (!photoUrls[id]) { try { const b = await idb.get(id); if (b) photoUrls[id] = URL.createObjectURL(b); } catch {} }
-    if (photoUrls[id]) img.src = photoUrls[id];
-  }
-}
-const photoImg = (id, cls = '') => `<img data-photo="${id}" class="${cls}" alt="" loading="lazy">`;
+/* ---------------- Imagem (para a IA analisar; não fica salva) ---------------- */
 function pickImage() {
   return new Promise((res) => {
     const i = document.createElement('input');
@@ -174,33 +144,69 @@ function pickImage() {
     i.click();
   });
 }
-async function shrink(file, max = 1280) {
+async function shrink(file, max = 1024) {
   try {
     const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
     const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas');
     c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-    return await new Promise((res) => c.toBlob((b) => res(b || file), 'image/jpeg', 0.82));
+    return await new Promise((res) => c.toBlob((b) => res(b || file), 'image/jpeg', 0.85));
   } catch { return file; }
 }
-/* Precisa ser chamado direto de um toque (o Android exige isso para abrir a câmera/galeria). */
-async function addPhoto(meta) {
-  const f = await pickImage();
-  if (!f) return null;
-  const blob = await shrink(f), id = 'p' + uid();
-  try { await idb.put(id, blob); } catch (e) { alert('Não consegui salvar a foto: ' + e.message); return null; }
-  const rec = { id, date: todayKey(), at: Date.now(), ...meta };
-  state.photos.push(rec); save();
-  return rec;
+const blobToB64 = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.readAsDataURL(b); });
+
+/* ---------------- IA: estimativa de calorias (API da Anthropic) ----------------
+   A chave fica só neste aparelho (localStorage) e vai direto para a Anthropic. */
+const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.6.0/+esm';
+let sdkPromise;
+async function aiClient() {
+  if (!state.ai?.key) throw new Error('Configure a chave da IA no Perfil.');
+  sdkPromise = sdkPromise || import(SDK_URL);
+  const { default: Anthropic } = await sdkPromise;
+  return new Anthropic({ apiKey: state.ai.key, dangerouslyAllowBrowser: true });
 }
-async function deletePhoto(id) {
-  state.photos = state.photos.filter((x) => x.id !== id); save();
-  try { await idb.del(id); } catch {}
-  if (photoUrls[id]) { URL.revokeObjectURL(photoUrls[id]); delete photoUrls[id]; }
+const FOOD_SCHEMA = {
+  type: 'object',
+  properties: {
+    alimento: { type: 'string', description: 'Nome curto do alimento' },
+    porcao: { type: 'string', description: 'Porção considerada, ex.: 1 barra de 25 g' },
+    kcal: { type: 'number' },
+    proteina_g: { type: 'number' },
+    carboidrato_g: { type: 'number' },
+    gordura_g: { type: 'number' },
+    confianca: { type: 'string', enum: ['alta', 'media', 'baixa'] },
+    observacao: { type: 'string', description: 'Uma frase curta: de onde veio a estimativa ou o que pode mudar o valor' },
+  },
+  required: ['alimento', 'porcao', 'kcal', 'proteina_g', 'carboidrato_g', 'gordura_g', 'confianca', 'observacao'],
+  additionalProperties: false,
+};
+async function estimateFood({ blob, text }) {
+  const client = await aiClient();
+  const content = [];
+  if (blob) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: await blobToB64(blob) } });
+  content.push({ type: 'text', text: [
+    'Estime as calorias e os macronutrientes do que a pessoa comeu, fora do plano alimentar dela.',
+    blob ? 'Use a foto. Se aparecer embalagem ou tabela nutricional, use os valores dela.' : '',
+    text ? `Descrição da pessoa: "${text}"` : '',
+    'Se a quantidade não estiver clara, considere uma porção típica no Brasil e diga qual foi.',
+    'Escreva em português do Brasil.',
+  ].filter(Boolean).join('\n') });
+  const res = await client.beta.messages.create({
+    model: 'claude-opus-5-5',
+    max_tokens: 4000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: FOOD_SCHEMA } },
+    messages: [{ role: 'user', content }],
+  });
+  if (res.stop_reason === 'refusal') throw new Error('A IA não conseguiu analisar esse item.');
+  const block = res.content.find((b) => b.type === 'text');
+  if (!block) throw new Error('A IA não devolveu resultado. Tente de novo.');
+  return JSON.parse(block.text);
 }
 
-/* ---------------- Consultas ---------------- */
+/* ---------------- Consultas ---------------- *//* ---------------- Consultas ---------------- */
 const finished = () => state.sessions.filter((s) => s.end);
 function nextWorkout() {
   const ws = state.plan.workouts;
@@ -379,7 +385,7 @@ views.hoje = () => {
   const alimentacao = `<button class="row" data-act="goto" data-v="dieta">
       <span class="badge ${meals.length && mealsDone === meals.length ? 'done' : ''}">${ic(meals.length && mealsDone === meals.length ? 'check' : 'meal')}</span>
       <span class="body"><div class="t">Alimentação</div>
-        ${meals.length ? `<div class="s">${mealsDone} de ${meals.length} refeições${log.extras.length ? ` · ${log.extras.length} fora do plano` : ''}</div><div class="bar"><i style="width:${(mealsDone / meals.length) * 100}%"></i></div>`
+        ${meals.length ? `<div class="s">${mealsDone} de ${meals.length} refeições${log.extras.length ? ` · ${extrasKcal(log) ? `${Math.round(extrasKcal(log))} kcal` : log.extras.length} fora do plano` : ''}</div><div class="bar"><i style="width:${(mealsDone / meals.length) * 100}%"></i></div>`
           : '<div class="s">Adicione o plano da nutricionista</div>'}</span>
       <span class="end">${ic('right')}</span></button>`;
 
@@ -508,9 +514,11 @@ views.dieta = () => {
           </button></div>`;
       }).join('')}</div>`, `<span class="tag ${done === groups.length ? 'ok' : ''}">${done}/${groups.length}</span>`)
     + suppSection(log)
-    + section('Fora do plano', log.extras.length
-        ? `<div class="group">${log.extras.map((x, i) => `<div class="row plain"><span class="body"><div class="t" style="font-weight:500">${esc(x.text)}</div><div class="s num">${esc(x.time)}</div></span><button class="text-btn" style="color:var(--ink-3)" data-act="del-extra" data-v="${i}">Remover</button></div>`).join('')}</div>`
-        : `<div class="group empty">Comeu algo diferente? Registre aqui, sem culpa.</div>`,
+    + section(`Fora do plano${extrasKcal(log) ? ` · ${Math.round(extrasKcal(log))} kcal` : ''}`, log.extras.length
+        ? `<div class="group">${log.extras.map((x, i) => `<div class="row plain"><span class="body"><div class="t" style="font-weight:500">${esc(x.text)}</div>
+            <div class="s num">${esc(x.time)}${x.kcal != null ? ` · ${Math.round(x.kcal)} kcal` : ''}${x.ai ? ' · estimado pela IA' : ''}</div></span>
+            <button class="text-btn" style="color:var(--ink-3)" data-act="del-extra" data-v="${i}">Remover</button></div>`).join('')}</div>`
+        : `<div class="group empty">Comeu algo fora das refeições? Tire uma foto ou descreva, e a IA calcula as calorias.</div>`,
       `<button class="text-btn" data-act="add-extra">+ Adicionar</button>`)
     + toolsSection();
 };
@@ -530,28 +538,47 @@ function suppSection(log) {
 
 function toolsSection() {
   const nRec = RECIPES.length + state.recipes.length;
-  const nPh = state.photos.filter((x) => x.kind === 'refeicao').length;
   return section('Ferramentas', `<div class="group">
     <button class="row" data-act="shopping"><span class="badge">${ic('cart')}</span><span class="body"><div class="t">Lista de compras</div><div class="s">Montada a partir do seu plano</div></span><span class="end">${ic('right')}</span></button>
     <button class="row" data-act="recipes"><span class="badge">${ic('book')}</span><span class="body"><div class="t">Receitas</div><div class="s">${nRec} receitas simples</div></span><span class="end">${ic('right')}</span></button>
-    <button class="row" data-act="food-diary"><span class="badge">${ic('camera')}</span><span class="body"><div class="t">Diário de fotos</div><div class="s">${nPh ? `${nPh} foto${nPh > 1 ? 's' : ''} de refeições` : 'Fotografe seus pratos'}</div></span><span class="end">${ic('right')}</span></button>
   </div>`);
 }
 
 /* ---------------- Tela: Perfil ---------------- */
 const IMC_FAIXA = (v) => (v < 18.5 ? 'abaixo do peso' : v < 25 ? 'peso adequado' : v < 30 ? 'sobrepeso' : 'obesidade');
+/* Faixas do IMC para adultos (OMS). Referência geral: não separa músculo de gordura. */
+function weightFeedback(w, alturaCm) {
+  if (!w || !alturaCm) return null;
+  const h = alturaCm / 100, imc = w / (h * h);
+  const min = 18.5 * h * h, max = 24.9 * h * h;
+  let msg;
+  if (imc < 18.5) msg = `Você está ${br(min - w)} kg abaixo da faixa considerada saudável para a sua altura.`;
+  else if (imc < 25) msg = 'Seu peso está dentro da faixa considerada saudável para a sua altura.';
+  else msg = `Você está ${br(w - max)} kg acima da faixa considerada saudável para a sua altura.`;
+  return { imc, faixa: IMC_FAIXA(imc), min, max, msg };
+}
+function weightCard(fb) {
+  const pos = Math.max(0, Math.min(100, ((fb.imc - 15) / (40 - 15)) * 100));
+  const seg = (a, b, cls, label) => `<div class="imc-seg ${cls}" style="width:${((b - a) / 25) * 100}%"><span>${label}</span></div>`;
+  return `<div class="group pad">
+    <div class="row-between"><div><div class="hint">IMC</div><div class="stat num">${br(fb.imc)}</div></div><span class="tag ${fb.imc >= 18.5 && fb.imc < 25 ? 'ok' : ''}">${cap(fb.faixa)}</span></div>
+    <div class="imc-bar">${seg(15, 18.5, '', 'Abaixo')}${seg(18.5, 25, 'good', 'Saudável')}${seg(25, 30, '', 'Sobrepeso')}${seg(30, 40, '', 'Obesidade')}<i style="left:${pos}%"></i></div>
+    <p style="margin-top:28px">${fb.msg}</p>
+    <p class="hint" style="margin-top:6px">Para a sua altura, a faixa saudável vai de <b class="num">${br(fb.min)}</b> a <b class="num">${br(fb.max)} kg</b>. O IMC é uma referência geral para adultos e não diferencia músculo de gordura. Sua nutricionista avalia melhor o seu caso.</p>
+  </div>`;
+}
 const latestWeight = () => morningSorted().filter((x) => x.peso != null).pop()?.peso ?? null;
 views.perfil = () => {
   const p = state.profile;
   const w = latestWeight();
-  const imc = w && p.altura ? w / ((p.altura / 100) ** 2) : null;
+  const fb = weightFeedback(w, p.altura);
   const kv = (label, value) => `<button class="row plain kv" data-act="edit-profile"><span class="body"><div class="t">${label}</div></span><span class="end">${value != null && value !== '' ? `<span class="v num">${value}</span>` : '<span>Adicionar</span>'}</span></button>`;
   return `<header class="head profile-head"><div class="avatar big">${p.nome ? esc(initials(p.nome)) : ic('user')}</div>
       <div><div class="kicker">Seu perfil</div><h1>${esc(p.nome || 'Perfil')}</h1></div></header>`
-    + (imc || (w && p.meta) ? `<div class="section two">
-        ${imc ? `<div class="group pad"><div class="hint">IMC</div><div class="stat num">${br(imc)}</div><div class="hint">${IMC_FAIXA(imc)}</div></div>` : ''}
-        ${w && p.meta ? `<div class="group pad"><div class="hint">Até a meta</div><div class="stat num">${Math.abs(w - p.meta) < 0.05 ? 'Chegou!' : br(Math.abs(w - p.meta)) + '<small> kg</small>'}</div><div class="hint">meta de ${br(p.meta)} kg</div></div>` : ''}
-      </div>` : '')
+    + (fb ? section('Seu peso', weightCard(fb)) : (w || p.altura ? `<div class="section"><div class="group empty">Informe ${w ? 'a altura' : 'o peso'} para ver se o seu peso está numa faixa saudável.</div></div>` : ''))
+    + (w && p.meta ? `<div class="section"><div class="group pad row-between"><div><div class="hint">Até a meta de ${br(p.meta)} kg</div>
+        <div class="stat num">${Math.abs(w - p.meta) < 0.05 ? 'Chegou!' : br(Math.abs(w - p.meta)) + '<small> kg</small>'}</div></div>
+        ${p.meta < fb?.min || p.meta > fb?.max ? '<span class="tag">Meta fora da faixa saudável</span>' : ''}</div></div>` : '')
     + section('Dados pessoais', `<div class="group">
         ${kv('Nome', p.nome ? esc(p.nome) : '')}
         ${kv('Idade', p.idade ? `${p.idade} anos` : '')}
@@ -563,11 +590,13 @@ views.perfil = () => {
       </div>`, `<button class="text-btn" data-act="edit-profile">Editar</button>`)
     + section('Treino', `<div class="group"><button class="row plain" data-act="plan"><span class="body"><div class="t">Plano de treino</div>
         <div class="s">Emagrecimento · ${p.dias}x por semana · ${LEVEL_LABEL[p.nivel]}</div></span><span class="end">${ic('right')}</span></button></div>`)
+    + section('Assistente IA', `<div class="group"><button class="row plain" data-act="ai-key"><span class="body"><div class="t">Cálculo de calorias por foto</div>
+        <div class="s">${state.ai?.key ? 'Ativado' : 'Toque para configurar'}</div></span><span class="end">${state.ai?.key ? '<span class="tag ok">Ativo</span>' : ''}${ic('right')}</span></button></div>`)
     + section('Seus dados', `<div class="group">
         <button class="row plain" data-act="export"><span class="body"><div class="t">Exportar backup</div><div class="s">Salva um arquivo com todos os seus dados</div></span></button>
         <button class="row plain" data-act="import"><span class="body"><div class="t">Importar backup</div><div class="s">Restaura a partir de um arquivo</div></span></button>
       </div>
-      <p class="hint" style="padding:10px 4px 0">Tudo fica salvo só neste celular. Em breve: assistente com IA e atividades automáticas do relógio.</p>
+      <p class="hint" style="padding:10px 4px 0">Tudo fica salvo só neste celular. Em breve: atividades automáticas do relógio.</p>
       <div class="stack-btns"><button class="btn danger block" data-act="reset">Apagar todos os dados</button></div>`);
 };
 
@@ -592,8 +621,6 @@ views.progresso = () => {
   return head('Seu progresso', 'Progresso')
     + section('Peso', `<div class="group">${pesoHero}${chartSlot('peso', wPts, 'kg')}</div>`,
       `<button class="text-btn" data-act="morning">+ Pesagem</button>`)
-    + measuresSection()
-    + photosSection()
     + section('Carga por exercício', names.length ? `<div class="group">
         <div class="pad" style="padding-bottom:0"><select data-act="progress-ex" aria-label="Exercício">${names.map((n) => `<option ${n === sel ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>
         ${lPts.length ? `<div class="hero" style="padding-top:12px"><div class="label">Maior carga recente</div><div class="big">${br(lPts[lPts.length - 1].y)}<small>kg</small></div></div>` : ''}
@@ -618,7 +645,6 @@ function render() {
   $('#view').innerHTML = views[tab]();
   $('#tabs').innerHTML = TABS.map(([k, label, icon]) => `<button data-tab="${k}" class="${k === tab ? 'active' : ''}" aria-current="${k === tab ? 'page' : 'false'}"><span class="pill">${ic(icon)}</span>${label}</button>`).join('');
   $$('[data-chart]').forEach(drawChart);
-  hydratePhotos($('#view'));
 }
 function go(tab) { state.ui.tab = tab; save(); render(); window.scrollTo(0, 0); }
 
@@ -675,7 +701,6 @@ function sheet(html, onSubmit) {
   };
   if (!dlg.open) dlg.showModal();
   f.scrollTop = 0;
-  hydratePhotos(f);
 }
 $('#sheet').addEventListener('click', (ev) => { if (ev.target.id === 'sheet') ev.target.close(); });
 const sheetActions = (ok = 'Salvar') => `<div class="sheet-actions"><button class="btn soft" value="cancel" formnovalidate>Cancelar</button><button class="btn" value="ok">${ok}</button></div>`;
@@ -887,11 +912,9 @@ function mealSheet(gid, oi) {
         <div class="subs hidden" data-subs="${fi}">${f.subs.map((x) => `<div class="sub"><div class="t">${esc(x.name)}</div>${x.qty ? `<div class="s">${esc(x.qty)}</div>` : ''}</div>`).join('')}</div>` : ''}
     </div>`).join('') || '<p class="hint">Nenhum alimento nesta opção.</p>'}
     ${o.notes ? `<details class="notes"><summary>Observações da nutricionista</summary><div>${esc(o.notes).replace(/\n/g, '<br>')}</div></details>` : ''}
-    ${mealPhotos(g)}
     <div class="stack-btns">
       <button class="btn block ${registered ? 'soft' : ''}" type="button" data-act="meal-reg" data-v="${g.id}:${oi}">${registered ? `${ic('check')} Registrada · toque para desfazer` : 'Registrar refeição'}</button>
-      <div class="row-btns"><button class="text-btn" type="button" data-act="meal-photo" data-v="${g.id}">${ic('camera')} Foto do prato</button>
-      <button class="text-btn" type="button" data-act="add-extra">Comi outra coisa</button></div>
+      <button class="text-btn" type="button" data-act="add-extra">Comi outra coisa</button>
     </div>`);
 }
 A['meal-open'] = (gid) => mealSheet(gid);
@@ -913,14 +936,86 @@ A['diet-day'] = (v) => {
   const d = keyToDate(state.ui.dietDay || todayKey()); d.setDate(d.getDate() + Number(v));
   const k = todayKey(d); state.ui.dietDay = k > todayKey() ? todayKey() : k; render();
 };
+const extrasKcal = (log) => log.extras.reduce((t, x) => t + (x.kcal || 0), 0);
+let pendingFood = null;
 A['add-extra'] = () => {
-  sheet(`<h2>Fora do plano</h2><p class="lead">O que você comeu?</p>
-    <div class="field"><input name="text" placeholder="ex.: 1 pastel de queijo e um refri" required autofocus></div>${sheetActions('Adicionar')}`, (f) => {
-    const t = f.text.value.trim(); if (!t) return false;
-    dayLog(state.ui.dietDay || todayKey()).extras.push({ text: t, time: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) });
+  pendingFood = null;
+  const hasKey = !!state.ai?.key;
+  sheet(`<h2>Fora do plano</h2><p class="lead">Tire uma foto do alimento (ou da embalagem) e/ou descreva. A IA estima as calorias.</p>
+    <div class="food-pick">
+      <button type="button" class="photo-slot" data-act="food-photo" aria-label="Tirar ou escolher foto"><span id="food-prev">${ic('camera')}<small>Foto</small></span></button>
+      <div class="field" style="flex:1;margin:0"><textarea name="text" style="min-height:96px" placeholder="ex.: 1 barra de chocolate ao leite, uns 3 quadradinhos"></textarea></div>
+    </div>
+    ${hasKey ? `<button type="button" class="btn soft block" style="margin-top:12px" data-act="food-ai">Calcular calorias com IA</button>`
+      : `<p class="hint" style="margin-top:12px">Para calcular com IA, configure a chave em <b>Perfil › Assistente IA</b>. Sem ela, você pode informar as calorias abaixo.</p>`}
+    <div id="food-result"></div>
+    <div class="two" style="margin-top:12px">
+      <div class="field"><label>Calorias (kcal)</label><input name="kcal" inputmode="numeric" placeholder="opcional"></div>
+      <div class="field"><label>Horário</label><input name="hora" type="time" value="${new Date().toTimeString().slice(0, 5)}"></div>
+    </div>
+    ${sheetActions('Adicionar')}`, (f) => {
+    const r = pendingFood?.result;
+    const text = f.text.value.trim() || (r ? `${r.alimento} (${r.porcao})` : '');
+    if (!text) { alert('Descreva o que comeu ou use a foto com a IA.'); return false; }
+    const kcal = num(f.kcal.value);
+    dayLog(state.ui.dietDay || todayKey()).extras.push({
+      text, time: f.hora.value, kcal,
+      ...(r ? { ai: true, proteina: r.proteina_g, carbo: r.carboidrato_g, gordura: r.gordura_g } : {}),
+    });
+    pendingFood = null; save(); render();
+  });
+};
+A['food-photo'] = async () => {
+  const f = await pickImage();
+  if (!f) return;
+  const blob = await shrink(f);
+  pendingFood = { blob };
+  const url = URL.createObjectURL(blob);
+  $('#food-prev').innerHTML = `<img src="${url}" alt="Foto do alimento">`;
+};
+A['food-ai'] = async (v, btn) => {
+  const f = $('#sheet-body'), text = f.text.value.trim(), blob = pendingFood?.blob;
+  if (!blob && !text) { alert('Tire uma foto ou descreva o alimento primeiro.'); return; }
+  btn.disabled = true; btn.textContent = 'Calculando…';
+  try {
+    const r = await estimateFood({ blob, text });
+    pendingFood = { ...(pendingFood || {}), result: r };
+    f.kcal.value = Math.round(r.kcal);
+    if (!text) f.text.value = `${r.alimento} (${r.porcao})`;
+    $('#food-result').innerHTML = `<div class="food ai-card">
+      <div class="row-between"><div><div class="t">${esc(r.alimento)}</div><div class="s">${esc(r.porcao)}</div></div>
+      <div class="kcal num">${Math.round(r.kcal)}<small> kcal</small></div></div>
+      <div class="macros num"><span>Proteína <b>${br(r.proteina_g)} g</b></span><span>Carbo <b>${br(r.carboidrato_g)} g</b></span><span>Gordura <b>${br(r.gordura_g)} g</b></span></div>
+      <div class="s" style="margin-top:8px">${esc(r.observacao)} · confiança ${esc(r.confianca === 'media' ? 'média' : r.confianca)}</div></div>`;
+    btn.textContent = 'Calcular de novo';
+  } catch (e) {
+    $('#food-result').innerHTML = `<p class="hint" style="margin-top:10px;color:var(--danger)">${esc(aiErrorText(e))}</p>`;
+    btn.textContent = 'Tentar de novo';
+  } finally { btn.disabled = false; }
+};
+function aiErrorText(e) {
+  const st = e?.status;
+  if (st === 401) return 'Chave da IA inválida. Confira em Perfil › Assistente IA.';
+  if (st === 402 || st === 403) return 'A conta da API não tem créditos ou permissão. Confira no console da Anthropic.';
+  if (st === 429) return 'Muitas consultas seguidas. Espere um pouco e tente de novo.';
+  if (!navigator.onLine) return 'Sem internet. A IA precisa de conexão.';
+  return e?.message || 'Não consegui calcular agora. Tente de novo.';
+}
+A['ai-key'] = () => {
+  sheet(`<h2>Assistente IA</h2>
+    <p class="lead">A IA calcula as calorias dos alimentos fora do plano, por foto ou descrição.</p>
+    <div class="food"><div class="s">1. Crie uma chave em <b>console.anthropic.com</b> (menu API Keys) e adicione créditos.<br>
+      2. Cole a chave abaixo. Cada cálculo custa poucos centavos.<br>
+      3. A chave fica salva só neste celular e não vai no backup.</div></div>
+    <div class="field" style="margin-top:12px"><label>Chave da API</label><input name="key" type="password" autocomplete="off" value="${esc(state.ai?.key || '')}" placeholder="sk-ant-..."></div>
+    ${state.ai?.key ? '<button type="button" class="btn danger block" data-act="ai-key-del">Remover chave</button>' : ''}
+    ${sheetActions()}`, (f) => {
+    const key = f.key.value.trim();
+    state.ai = key ? { key } : undefined;
     save(); render();
   });
 };
+A['ai-key-del'] = () => { delete state.ai; save(); $('#sheet').close(); render(); };
 A['del-extra'] = (i) => { dayLog(state.ui.dietDay || todayKey()).extras.splice(+i, 1); save(); render(); };
 
 /* Pesagem */
@@ -977,13 +1072,12 @@ A['edit-profile'] = () => {
       if (cur) cur.peso = peso; else state.morning.push({ date: key, peso, sono: null, disposicao: null });
     }
     save(); render();
+    const fb = weightFeedback(latestWeight(), p.altura);
+    if (fb) setTimeout(() => sheet(`<h2>Sobre o seu peso</h2>${weightCard(fb)}<div class="stack-btns"><button class="btn block" value="ok">Entendi</button></div>`), 50);
   });
 };
-const blobToData = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
-A.export = async () => {
-  const fotos = {};
-  for (const ph of state.photos) { try { const b = await idb.get(ph.id); if (b) fotos[ph.id] = await blobToData(b); } catch {} }
-  const blob = new Blob([JSON.stringify({ ...state, active: null, fotos })], { type: 'application/json' });
+A.export = () => {
+  const blob = new Blob([JSON.stringify({ ...state, active: null, ai: undefined })], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = `treino-dieta-backup-${todayKey()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
@@ -997,129 +1091,18 @@ A.import = () => {
       const data = JSON.parse(await inp.files[0].text());
       if (!data?.plan || !Array.isArray(data.sessions)) throw new Error('o arquivo não é um backup deste app');
       if (!confirm('Substituir os dados atuais pelo backup?')) return;
-      const fotos = data.fotos || {}; delete data.fotos;
-      for (const [id, url] of Object.entries(fotos)) { await idb.put(id, await (await fetch(url)).blob()); }
-      state = migrate(Object.assign(defaultState(), data)); save(); $('#sheet').close(); render();
+      delete data.fotos;
+      const ai = state.ai;
+      state = migrate(Object.assign(defaultState(), data));
+      if (ai) state.ai = ai; save(); $('#sheet').close(); render();
     } catch (e) { alert('Não consegui importar: ' + e.message); }
   };
   inp.click();
 };
 A.reset = async () => {
-  if (!confirm('Apagar TODOS os dados, inclusive fotos? Isso não pode ser desfeito.')) return;
+  if (!confirm('Apagar TODOS os dados? Isso não pode ser desfeito.')) return;
   if (!confirm('Tem certeza? Faça um backup antes se quiser guardar.')) return;
-  try { await idb.clear(); } catch {}
   state = defaultState(); stopTimer(); save(); $('#sheet').close(); render();
-};
-
-/* ================= Medidas corporais ================= */
-const MEDIDAS = [['cintura', 'Cintura'], ['abdomen', 'Abdômen'], ['quadril', 'Quadril'], ['peito', 'Peito'], ['braco', 'Braço'], ['coxa', 'Coxa']];
-function measuresSection() {
-  const ms = state.measures.slice().sort((a, b) => a.date.localeCompare(b.date));
-  const add = `<button class="text-btn" data-act="measures">+ Medidas</button>`;
-  if (!ms.length) return section('Medidas', `<div class="group empty">${ic('ruler')}<div>Meça com fita métrica a cada 2 a 4 semanas. A cintura costuma mostrar o progresso antes da balança.</div></div>`, add);
-  const last = ms[ms.length - 1];
-  const firstOf = (k) => ms.find((x) => x[k] != null);
-  const rows = MEDIDAS.filter(([k]) => last[k] != null).map(([k, label]) => {
-    const f = firstOf(k), d = f && f.date !== last.date ? last[k] - f[k] : null;
-    return `<div class="row plain kv"><span class="body"><div class="t">${label}</div></span>
-      <span class="end">${d != null && Math.abs(d) >= 0.1 ? `<span class="tag ${d < 0 ? 'ok' : ''}">${d > 0 ? '+' : ''}${br(d)}</span>` : ''}<span class="v num">${br(last[k])} cm</span></span></div>`;
-  }).join('');
-  return section('Medidas', `<div class="group">${rows}</div><p class="hint" style="padding:8px 4px 0">Última medição: ${fmtDay(last.date)}${ms.length > 1 ? ` · comparando com ${fmtDay(ms[0].date)}` : ''}</p>`, add);
-}
-A.measures = () => {
-  const key = todayKey(), cur = state.measures.find((x) => x.date === key) || {};
-  const prev = state.measures.filter((x) => x.date < key).sort((a, b) => a.date.localeCompare(b.date)).pop() || {};
-  sheet(`<h2>Medidas</h2><p class="lead">Em centímetros. Meça sempre no mesmo ponto, de manhã.</p>
-    <div class="two">${MEDIDAS.map(([k, label]) => `<div class="field"><label>${label}</label><input name="${k}" inputmode="decimal" value="${cur[k] != null ? br(cur[k]) : ''}" placeholder="${prev[k] != null ? br(prev[k]) : 'cm'}"></div>`).join('')}</div>
-    ${sheetActions()}`, (f) => {
-    const rec = { date: key };
-    MEDIDAS.forEach(([k]) => { const v = num(f[k].value); if (v != null) rec[k] = v; });
-    if (Object.keys(rec).length === 1) { alert('Preencha pelo menos uma medida.'); return false; }
-    state.measures = state.measures.filter((x) => x.date !== key).concat(rec);
-    save(); render();
-  });
-};
-
-/* ================= Evolução fotográfica ================= */
-const POSES = [['frente', 'Frente'], ['lado', 'Lado'], ['costas', 'Costas']];
-const poseLabel = (p) => (POSES.find(([k]) => k === p) || [, ''])[1];
-const weightOn = (date) => {
-  const ms = morningSorted().filter((x) => x.peso != null);
-  return (ms.filter((x) => x.date <= date).pop() || ms[0])?.peso ?? null;
-};
-function photosSection() {
-  const ps = state.photos.filter((x) => x.kind === 'corpo').sort((a, b) => b.at - a.at);
-  const add = `<button class="text-btn" data-act="body-photo">+ Foto</button>`;
-  if (!ps.length) return section('Fotos de evolução', `<div class="group empty">${ic('camera')}<div>Tire fotos de frente, de lado e de costas, sempre no mesmo lugar e com a mesma luz.</div></div>`, add);
-  const dates = new Set(ps.map((x) => x.date));
-  return section('Fotos de evolução', `<div class="group">
-      <div class="thumbs">${ps.map((x) => `<button class="thumb" data-act="photo" data-v="${x.id}">${photoImg(x.id)}<span>${fmtDay(x.date)} · ${poseLabel(x.pose)}</span></button>`).join('')}</div>
-      ${dates.size > 1 ? `<div class="pad" style="padding-top:0"><button class="btn soft block" data-act="compare">Comparar antes e depois</button></div>` : ''}
-    </div>`, add);
-}
-A['body-photo'] = () => {
-  sheet(`<h2>Nova foto</h2><p class="lead">Mesma posição, mesmo lugar e mesma luz deixam a comparação justa.</p>
-    <div class="field"><label>Posição</label>${seg('pose', POSES, 'frente')}</div>
-    <div class="stack-btns"><button class="btn block" type="button" data-act="pick-body-photo">${ic('camera')} Tirar ou escolher foto</button>
-    <button class="btn soft block" value="cancel">Cancelar</button></div>`);
-};
-A['pick-body-photo'] = async () => {
-  const pose = $('#sheet-body [name=pose]').value || 'frente';
-  const rec = await addPhoto({ kind: 'corpo', pose });
-  if (rec) { $('#sheet').close(); render(); }
-};
-A.photo = (id) => {
-  const x = state.photos.find((p) => p.id === id);
-  if (!x) return;
-  const w = x.kind === 'corpo' ? weightOn(x.date) : null;
-  sheet(`<h2>${x.kind === 'corpo' ? poseLabel(x.pose) : esc(x.mealName || 'Refeição')}</h2>
-    <p class="lead">${cap(fmtDayLong(x.date))}${w != null ? ` · ${br(w)} kg` : ''}</p>
-    <div class="photo-full">${photoImg(x.id)}</div>
-    <div class="sheet-actions"><button class="btn danger" type="button" data-act="del-photo" data-v="${x.id}">Apagar</button><button class="btn soft" value="cancel">Fechar</button></div>`);
-};
-A['del-photo'] = async (id) => {
-  if (!confirm('Apagar esta foto?')) return;
-  await deletePhoto(id); $('#sheet').close(); render();
-};
-A.compare = (pose) => {
-  const all = state.photos.filter((x) => x.kind === 'corpo');
-  const poses = POSES.filter(([k]) => new Set(all.filter((x) => x.pose === k).map((x) => x.date)).size > 1);
-  if (!poses.length) { alert('Tire fotos da mesma posição em dias diferentes para comparar.'); return; }
-  pose = poses.some(([k]) => k === pose) ? pose : poses[0][0];
-  const ps = all.filter((x) => x.pose === pose).sort((a, b) => a.at - b.at);
-  const a = ps[0], b = ps[ps.length - 1];
-  const wa = weightOn(a.date), wb = weightOn(b.date);
-  const days = Math.round((keyToDate(b.date) - keyToDate(a.date)) / 864e5);
-  sheet(`<h2>Antes e depois</h2><p class="lead">${days} dias de diferença${wa != null && wb != null ? ` · ${wb - wa > 0 ? '+' : ''}${br(wb - wa)} kg` : ''}</p>
-    ${poses.length > 1 ? `<div class="seg" style="margin-bottom:12px">${poses.map(([k, l]) => `<button type="button" data-act="compare" data-v="${k}" class="${k === pose ? 'on' : ''}">${l}</button>`).join('')}</div>` : ''}
-    <div class="compare">
-      <figure>${photoImg(a.id)}<figcaption>${fmtDay(a.date)}${wa != null ? ` · ${br(wa)} kg` : ''}</figcaption></figure>
-      <figure>${photoImg(b.id)}<figcaption>${fmtDay(b.date)}${wb != null ? ` · ${br(wb)} kg` : ''}</figcaption></figure>
-    </div>
-    <div class="stack-btns"><button class="btn soft block" value="cancel">Fechar</button></div>`);
-};
-
-/* ================= Diário alimentar (fotos dos pratos) ================= */
-function mealPhotos(g) {
-  const day = state.ui.dietDay || todayKey();
-  const ps = state.photos.filter((x) => x.kind === 'refeicao' && x.meal === g.id && x.date === day);
-  if (!ps.length) return '';
-  return `<div class="thumbs flat">${ps.map((x) => `<button class="thumb" type="button" data-act="photo" data-v="${x.id}">${photoImg(x.id)}</button>`).join('')}</div>`;
-}
-A['meal-photo'] = async (gid) => {
-  const g = state.diet.groups.find((x) => x.id === gid);
-  const rec = await addPhoto({ kind: 'refeicao', meal: gid, mealName: g?.name || '', date: state.ui.dietDay || todayKey() });
-  if (rec) { mealSheet(gid); render(); }
-};
-A['food-diary'] = () => {
-  const ps = state.photos.filter((x) => x.kind === 'refeicao').sort((a, b) => b.at - a.at);
-  const byDay = {};
-  ps.forEach((x) => { (byDay[x.date] = byDay[x.date] || []).push(x); });
-  sheet(`<h2>Diário de fotos</h2><p class="lead">Fotografe o prato ao registrar uma refeição. Ajuda você e a nutri a enxergarem a rotina.</p>
-    ${ps.length ? Object.entries(byDay).map(([d, list]) => `<div class="diary-day"><div class="section-title" style="padding-left:0">${cap(fmtDayLong(d))}</div>
-      <div class="grid3">${list.map((x) => `<button class="thumb sq" type="button" data-act="photo" data-v="${x.id}">${photoImg(x.id)}<span>${esc(x.mealName || '')}</span></button>`).join('')}</div></div>`).join('')
-      : `<div class="empty">${ic('camera')}<div>Nenhuma foto ainda. Abra uma refeição e toque em “Foto do prato”.</div></div>`}
-    <div class="stack-btns"><button class="btn soft block" value="cancel">Fechar</button></div>`);
 };
 
 /* ================= Suplementos ================= */
